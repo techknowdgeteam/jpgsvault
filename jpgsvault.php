@@ -1,5 +1,5 @@
 <?php
-  // jpgsvault.php - Dynamic Folder & Image Gallery with DB + Fullscreen + Copy Link + BULK UPLOAD + EDIT/DELETE + UPLOADED FOLDERS + MOVE TO UPLOADED + **SEARCH BY URL** + **MOVE ALL JPGS** + **MOVE BACK FROM UPLOADED** + **AUTO-SAVE ALL COPIED LINKS TO DB** + **AUTO-SAVE ALL IMAGE URLS ON LOAD**
+  // jpgsvault.php - Dynamic Folder & Image Gallery with DB + Fullscreen + Copy Link + BULK UPLOAD + EDIT/DELETE + UPLOADED FOLDERS + MOVE TO UPLOADED + **SEARCH BY URL** + **MOVE ALL JPGS** + **MOVE BACK FROM UPLOADED** + **AUTO-SAVE ALL COPIED LINKS TO DB** + **AUTO-SAVE ALL IMAGE URLS ON LOAD** + **MOVE TO ANOTHER FOLDER** + **HOME VIEW** + **SELECTION MOVEMENT** + **PASSKEY PROTECTION** + **AUTO LOGOUT**
   // ---------------------------------------------------------------
   // DATABASE
   $host = 'sql201.infinityfree.com';
@@ -7,6 +7,7 @@
   $username = 'if0_40367004';
   $password = 'NkwFAH15FRIlvCf';
 
+  session_start();
 
   try {
       $pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
@@ -18,9 +19,118 @@
   // Ensure base table exists
   $pdo->exec("CREATE TABLE IF NOT EXISTS jpgsvault_table (id INT AUTO_INCREMENT PRIMARY KEY)");
 
+  // ADD server_passkey COLUMN (stores the passkey)
+  if (!columnExists($pdo, 'server_passkey')) {
+      $pdo->exec("ALTER TABLE jpgsvault_table ADD COLUMN server_passkey VARCHAR(255) DEFAULT NULL");
+  }
+
   // ADD copied_links COLUMN (stores all copied URLs)
   if (!columnExists($pdo, 'copied_links')) {
       $pdo->exec("ALTER TABLE jpgsvault_table ADD COLUMN copied_links JSON DEFAULT NULL");
+  }
+
+  // ---------------------------------------------------------------
+  // PASSKEY HANDLING
+  // ---------------------------------------------------------------
+  
+  // Check if passkey exists in database
+  $stmt = $pdo->prepare("SELECT server_passkey FROM jpgsvault_table WHERE id = 1");
+  $stmt->execute();
+  $storedPasskey = $stmt->fetchColumn();
+  $hasPasskey = !empty($storedPasskey);
+
+  // Handle passkey setup
+  if (isset($_POST['action']) && $_POST['action'] === 'setup_passkey') {
+      $newPasskey = trim($_POST['passkey'] ?? '');
+      if (empty($newPasskey)) {
+          echo json_encode(['success' => false, 'message' => 'Passkey cannot be empty']);
+          exit;
+      }
+      
+      // Hash the passkey for security
+      $hashedPasskey = password_hash($newPasskey, PASSWORD_DEFAULT);
+      
+      $pdo->prepare("UPDATE jpgsvault_table SET server_passkey = ? WHERE id = 1")
+          ->execute([$hashedPasskey]);
+      
+      // Set session for logged in user
+      $_SESSION['jpgsvault_authenticated'] = true;
+      $_SESSION['jpgsvault_last_activity'] = time();
+      
+      echo json_encode(['success' => true]);
+      exit;
+  }
+
+  // Handle passkey verification
+  if (isset($_POST['action']) && $_POST['action'] === 'verify_passkey') {
+      $inputPasskey = trim($_POST['passkey'] ?? '');
+      
+      if (empty($storedPasskey)) {
+          echo json_encode(['success' => false, 'message' => 'No passkey set']);
+          exit;
+      }
+      
+      if (password_verify($inputPasskey, $storedPasskey)) {
+          $_SESSION['jpgsvault_authenticated'] = true;
+          $_SESSION['jpgsvault_last_activity'] = time();
+          echo json_encode(['success' => true]);
+      } else {
+          echo json_encode(['success' => false, 'message' => 'Invalid passkey']);
+      }
+      exit;
+  }
+
+  // Handle logout
+  if (isset($_POST['action']) && $_POST['action'] === 'logout') {
+      session_destroy();
+      echo json_encode(['success' => true]);
+      exit;
+  }
+
+  // Check authentication status
+  if (isset($_GET['action']) && $_GET['action'] === 'check_auth') {
+      $authenticated = isset($_SESSION['jpgsvault_authenticated']) && $_SESSION['jpgsvault_authenticated'] === true;
+      
+      // Check for inactivity timeout (30 minutes = 1800 seconds)
+      if ($authenticated && isset($_SESSION['jpgsvault_last_activity'])) {
+          $inactive = time() - $_SESSION['jpgsvault_last_activity'];
+          if ($inactive > 1800) { // 30 minutes
+              session_destroy();
+              $authenticated = false;
+          } else {
+              // Update last activity time
+              $_SESSION['jpgsvault_last_activity'] = time();
+          }
+      }
+      
+      echo json_encode([
+          'authenticated' => $authenticated,
+          'has_passkey' => $hasPasskey
+      ]);
+      exit;
+  }
+
+  // If not authenticated and not a passkey-related request, show login page
+  $isAuthRequest = isset($_POST['action']) && in_array($_POST['action'], ['setup_passkey', 'verify_passkey', 'logout']);
+  $isAuthCheck = isset($_GET['action']) && $_GET['action'] === 'check_auth';
+  
+  if (!$isAuthRequest && !$isAuthCheck) {
+      $isAuthenticated = isset($_SESSION['jpgsvault_authenticated']) && $_SESSION['jpgsvault_authenticated'] === true;
+      
+      // Check inactivity
+      if ($isAuthenticated && isset($_SESSION['jpgsvault_last_activity'])) {
+          if (time() - $_SESSION['jpgsvault_last_activity'] > 1800) {
+              session_destroy();
+              $isAuthenticated = false;
+          } else {
+              $_SESSION['jpgsvault_last_activity'] = time();
+          }
+      }
+      
+      if (!$isAuthenticated) {
+          // Instead of exiting, we'll include the login page template
+          $showLoginPage = true;
+      }
   }
 
   // ---------------------------------------------------------------
@@ -65,7 +175,6 @@
       return $proto . '://' . $_SERVER['HTTP_HOST'] . dirname($_SERVER['SCRIPT_NAME']);
   }
 
-
   // ---------------------------------------------------------------
   // NEW: Purge copied_links for deleted/moved files
   function purgeCopiedLog($pdo, $paths) {
@@ -96,7 +205,7 @@
   $allColumns = [];
   $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault_table");
   while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
-      if ($col['Field'] !== 'id') {
+      if ($col['Field'] !== 'id' && $col['Field'] !== 'copied_links' && $col['Field'] !== 'server_passkey') {
           $allColumns[] = $col['Field'];
       }
   }
@@ -357,7 +466,182 @@
       purgeCopiedLog($pdo, $removedOriginalPaths);  // <-- CLEAN LOG
 
       rmdirIfEmpty($oldDir);
-      echo json_encode(['success' => true, 'moved' => count($movedPaths)]);
+      echo json_encode(['success' => true, 'moved' => count($movedPaths), 'failed' => $failed]);
+      exit;
+  }
+
+  // ==============================================
+  // MOVE TO ANOTHER FOLDER (NEW)
+  // ==============================================
+  if (isset($_POST['action']) && $_POST['action'] === 'move_to_folder') {
+      $sourceFolder = $_POST['source_folder'];
+      $targetFolder = $_POST['target_folder'];
+      $urlList = $_POST['urls'] ?? '';
+      $urls = array_filter(array_map('trim', explode(',', $urlList)));
+      
+      if (!columnExists($pdo, $sourceFolder) || !columnExists($pdo, $targetFolder) || empty($urls) || $sourceFolder === $targetFolder) {
+          echo json_encode(['success' => false, 'message' => 'Invalid request or same folder']);
+          exit;
+      }
+
+      $sourceImages = getImagesInFolder($pdo, $sourceFolder);
+      $targetImages = getImagesInFolder($pdo, $targetFolder);
+      $base = baseUrl();
+      
+      $sourceDir = "jpgs/$sourceFolder/";
+      $targetDir = "jpgs/$targetFolder/";
+      ensureDir($targetDir);
+
+      $movedPaths = [];
+      $removedOriginalPaths = [];
+      $failed = [];
+
+      foreach ($urls as $url) {
+          $url = trim($url);
+          // Remove quotes if present
+          $url = trim($url, '"\'');
+          $url = preg_replace('/\?v=\d+$/', '', $url);
+          $decodedUrl = urldecode($url);
+          
+          // Normalize the input path
+          $pathFromRoot = parse_url($decodedUrl, PHP_URL_PATH) ?: '';
+          $basePath = dirname($_SERVER['SCRIPT_NAME']);
+          if (str_starts_with($pathFromRoot, $basePath)) {
+              $normalizedInput = ltrim(substr($pathFromRoot, strlen($basePath)), '/');
+          } else {
+              $normalizedInput = ltrim($pathFromRoot, '/');
+          }
+          $inputFilename = basename($normalizedInput);
+
+          $matchedPath = null;
+          foreach ($sourceImages as $storedPath) {
+              $storedNormalized = ltrim($storedPath, '/');
+              if (
+                  strcasecmp($storedNormalized, $normalizedInput) === 0 ||
+                  strcasecmp(basename($storedPath), $inputFilename) === 0
+              ) {
+                  $matchedPath = $storedPath;
+                  break;
+              }
+          }
+
+          if (!$matchedPath) {
+              $failed[] = $url;
+              continue;
+          }
+
+          $oldPath = $matchedPath;
+          $filename = basename($oldPath);
+          $newPath = $targetDir . $filename;
+
+          // Handle filename conflicts
+          if (file_exists($newPath)) {
+              $ext = pathinfo($filename, PATHINFO_EXTENSION);
+              $name = pathinfo($filename, PATHINFO_FILENAME);
+              do {
+                  $filename = $name . '_' . uniqid() . '.' . $ext;
+                  $newPath = $targetDir . $filename;
+              } while (file_exists($newPath));
+          }
+
+          $realOld = realpath($oldPath);
+          if ($realOld && is_file($realOld) && rename($realOld, $newPath)) {
+              $movedPaths[] = $newPath;
+              $removedOriginalPaths[] = $oldPath;
+          } else {
+              $failed[] = $oldPath;
+          }
+      }
+
+      if (empty($movedPaths)) {
+          echo json_encode(['success' => false, 'message' => 'No images moved']);
+          exit;
+      }
+
+      // Update target folder
+      $newTargetImages = array_merge($targetImages, $movedPaths);
+      saveImagesToFolder($pdo, $targetFolder, $newTargetImages);
+
+      // Update source folder
+      $remainingSource = array_values(array_diff($sourceImages, $removedOriginalPaths));
+      saveImagesToFolder($pdo, $sourceFolder, $remainingSource);
+
+      purgeCopiedLog($pdo, $removedOriginalPaths);
+
+      rmdirIfEmpty($sourceDir);
+      echo json_encode(['success' => true, 'moved' => count($movedPaths), 'failed' => $failed]);
+      exit;
+  }
+
+  // ==============================================
+  // MOVE SELECTED IMAGES (NEW - for selection-based movement)
+  // ==============================================
+  if (isset($_POST['action']) && $_POST['action'] === 'move_selected') {
+      $sourceFolder = $_POST['source_folder'];
+      $targetFolder = $_POST['target_folder'];
+      $paths = json_decode($_POST['paths'] ?? '[]', true);
+      
+      if (!columnExists($pdo, $sourceFolder) || !columnExists($pdo, $targetFolder) || empty($paths) || $sourceFolder === $targetFolder) {
+          echo json_encode(['success' => false, 'message' => 'Invalid request or same folder']);
+          exit;
+      }
+
+      $sourceImages = getImagesInFolder($pdo, $sourceFolder);
+      $targetImages = getImagesInFolder($pdo, $targetFolder);
+      
+      $sourceDir = "jpgs/$sourceFolder/";
+      $targetDir = "jpgs/$targetFolder/";
+      ensureDir($targetDir);
+
+      $movedPaths = [];
+      $removedOriginalPaths = [];
+      $failed = [];
+
+      foreach ($paths as $oldPath) {
+          if (!in_array($oldPath, $sourceImages)) {
+              $failed[] = $oldPath;
+              continue;
+          }
+
+          $filename = basename($oldPath);
+          $newPath = $targetDir . $filename;
+
+          // Handle filename conflicts
+          if (file_exists($newPath)) {
+              $ext = pathinfo($filename, PATHINFO_EXTENSION);
+              $name = pathinfo($filename, PATHINFO_FILENAME);
+              do {
+                  $filename = $name . '_' . uniqid() . '.' . $ext;
+                  $newPath = $targetDir . $filename;
+              } while (file_exists($newPath));
+          }
+
+          $realOld = realpath($oldPath);
+          if ($realOld && is_file($realOld) && rename($realOld, $newPath)) {
+              $movedPaths[] = $newPath;
+              $removedOriginalPaths[] = $oldPath;
+          } else {
+              $failed[] = $oldPath;
+          }
+      }
+
+      if (empty($movedPaths)) {
+          echo json_encode(['success' => false, 'message' => 'No images moved']);
+          exit;
+      }
+
+      // Update target folder
+      $newTargetImages = array_merge($targetImages, $movedPaths);
+      saveImagesToFolder($pdo, $targetFolder, $newTargetImages);
+
+      // Update source folder
+      $remainingSource = array_values(array_diff($sourceImages, $removedOriginalPaths));
+      saveImagesToFolder($pdo, $sourceFolder, $remainingSource);
+
+      purgeCopiedLog($pdo, $removedOriginalPaths);
+
+      rmdirIfEmpty($sourceDir);
+      echo json_encode(['success' => true, 'moved' => count($movedPaths), 'failed' => $failed]);
       exit;
   }
 
@@ -459,7 +743,7 @@
       purgeCopiedLog($pdo, $removedOriginalPaths);  // <-- CLEAN LOG
 
       rmdirIfEmpty($oldDir);
-      echo json_encode(['success' => true, 'moved' => count($movedPaths)]);
+      echo json_encode(['success' => true, 'moved' => count($movedPaths), 'failed' => $failed]);
       exit;
   }
 
@@ -604,6 +888,33 @@
       exit;
   }
 
+  // GET FOLDER LIST (for home view) - FIXED: Now properly implemented
+  if (isset($_GET['action']) && $_GET['action'] === 'get_folders') {
+      $folders = [];
+      
+      // Get all main folders (non-uploaded)
+      $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault_table");
+      while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
+          $field = $col['Field'];
+          if ($field !== 'id' && $field !== 'copied_links' && $field !== 'server_passkey' && !isUploadedFolder($field)) {
+              $images = getImagesInFolder($pdo, $field);
+              $count = count(array_filter($images, function($p) {
+                  return file_exists($p);
+              }));
+              
+              $folders[] = [
+                  'name' => formatName($field),
+                  'folder' => $field,
+                  'count' => $count,
+                  'first_letter' => substr(formatName($field), 0, 1) . substr(formatName($field), -1, 1)
+              ];
+          }
+      }
+      
+      echo json_encode($folders);
+      exit;
+  }
+
   // LOG COPIED LINK (single)
   if (isset($_POST['action']) && $_POST['action'] === 'log_copy') {
       $url = trim($_POST['url'] ?? '');
@@ -683,12 +994,12 @@
       exit;
   }
 
-  // LIST FOLDERS
+  // LIST FOLDERS (for initial page load)
   $mainFolders = [];
   $uploadedFolders = [];
   $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault_table");
   while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
-      if ($col['Field'] !== 'id' && $col['Field'] !== 'copied_links') {
+      if ($col['Field'] !== 'id' && $col['Field'] !== 'copied_links' && $col['Field'] !== 'server_passkey') {
           if (isUploadedFolder($col['Field'])) {
               $orig = getOriginalFolder($col['Field']);
               if (columnExists($pdo, $orig)) {
@@ -700,6 +1011,201 @@
       }
   }
   $folders = array_merge($mainFolders, $uploadedFolders);
+  
+  // If showing login page, output only that
+  if (isset($showLoginPage) && $showLoginPage) {
+      // Output just the login page
+      ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JPGS Vault - Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            padding: 3rem;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 0.9rem;
+        }
+        .input-group {
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 0.8rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        .error {
+            color: #dc3545;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+        .info {
+            color: #17a2b8;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>JPGS Vault</h1>
+        <div class="subtitle">Secure Image Gallery</div>
+        <div id="setup-section" style="display: <?= $hasPasskey ? 'none' : 'block' ?>;">
+            <p class="info">First time setup - Create your passkey</p>
+            <div class="input-group">
+                <label>New Passkey</label>
+                <input type="password" id="new-passkey" placeholder="Enter passkey">
+            </div>
+            <div class="input-group">
+                <label>Confirm Passkey</label>
+                <input type="password" id="confirm-passkey" placeholder="Confirm passkey">
+            </div>
+            <button onclick="setupPasskey()">Create Passkey</button>
+        </div>
+        <div id="login-section" style="display: <?= $hasPasskey ? 'block' : 'none' ?>;">
+            <p class="info" style="margin-bottom: 20px;">Enter your passkey to continue</p>
+                <input type="password" id="login-passkey" placeholder="Enter passkey">
+            </div>
+            <button onclick="verifyPasskey()" style="margin-top: 20px;">Login</button>
+        </div>
+        <div id="login-error" class="error"></div>
+    </div>
+
+    <script>
+        function setupPasskey() {
+            const newPasskey = document.getElementById('new-passkey').value;
+            const confirmPasskey = document.getElementById('confirm-passkey').value;
+            const errorDiv = document.getElementById('login-error');
+            
+            if (!newPasskey) {
+                errorDiv.textContent = 'Passkey cannot be empty';
+                return;
+            }
+            
+            if (newPasskey !== confirmPasskey) {
+                errorDiv.textContent = 'Passkeys do not match';
+                return;
+            }
+            
+            fetch('', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `action=setup_passkey&passkey=${encodeURIComponent(newPasskey)}`
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    window.location.reload();
+                } else {
+                    errorDiv.textContent = res.message || 'Setup failed';
+                }
+            })
+            .catch(err => {
+                errorDiv.textContent = 'Connection error';
+            });
+        }
+        
+        function verifyPasskey() {
+            const passkey = document.getElementById('login-passkey').value;
+            const errorDiv = document.getElementById('login-error');
+            
+            if (!passkey) {
+                errorDiv.textContent = 'Please enter your passkey';
+                return;
+            }
+            
+            fetch('', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `action=verify_passkey&passkey=${encodeURIComponent(passkey)}`
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    window.location.reload();
+                } else {
+                    errorDiv.textContent = res.message || 'Invalid passkey';
+                }
+            })
+            .catch(err => {
+                errorDiv.textContent = 'Connection error';
+            });
+        }
+        
+        // Handle Enter key
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                if (document.getElementById('login-section').style.display === 'block') {
+                    verifyPasskey();
+                } else {
+                    setupPasskey();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+      <?php
+      exit;
+  }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -739,7 +1245,7 @@
     box-shadow:0 10px 30px rgba(0,0,0,.15);
     overflow:hidden;
     min-width:220px;
-    max-height:60vh;           /* Limit height to avoid covering the whole screen */
+    max-height:60vh;
     display:none;
     flex-direction:column;
     z-index:20;
@@ -747,7 +1253,7 @@
   }
   .folder-menu.show{display:flex}
   .folder-menu-content{
-    overflow-y:auto;           /* Make the content scrollable */
+    overflow-y:auto;
     flex:1;
   }
   .folder-item{
@@ -766,8 +1272,15 @@
     flex-shrink:0;
   }
   .folder-item:hover{background:#f8fafc}
-  .folder-item .folder-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .folder-item .folder-actions{display:flex;gap:.4rem}
+  .folder-item .folder-name{
+    flex:1;
+    overflow:hidden;
+    word-wrap: break-word;
+    white-space: normal;
+    line-height: 1.3;
+    padding-right: 8px;
+  }
+  .folder-item .folder-actions{display:flex;gap:.4rem;flex-shrink:0}
   .folder-actions button{background:none;border:none;cursor:pointer;font-size:1rem;padding:2px 4px;border-radius:4px;transition:background .2s}
   .folder-actions .edit-btn{color:#f59e0b}
   .folder-actions .edit-btn:hover{background:#fffbe6}
@@ -785,6 +1298,10 @@
   .selection-controls input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);cursor:pointer}
   .delete-selected-btn{background:var(--danger);color:white;padding:.6rem 1.2rem;font-size:.9rem;border:none;border-radius:50px;cursor:pointer;font-weight:600;display:none;transition:var(--transition)}
   .delete-selected-btn:hover{background:#dc2626;transform:translateY(-1px)}
+  .move-selected-uploaded-btn{background:var(--success);color:white;padding:.6rem 1.2rem;font-size:.9rem;border:none;border-radius:50px;cursor:pointer;font-weight:600;display:none;transition:var(--transition)}
+  .move-selected-uploaded-btn:hover{background:#0d8b5f;transform:translateY(-1px)}
+  .move-selected-folder-btn{background:#8b5cf6;color:white;padding:.6rem 1.2rem;font-size:.9rem;border:none;border-radius:50px;cursor:pointer;font-weight:600;display:none;transition:var(--transition)}
+  .move-selected-folder-btn:hover{background:#7c3aed;transform:translateY(-1px)}
   .gallery{padding:1rem 1.5rem;max-width:1400px;margin:auto;flex:1}
   .gallery-title{text-align:center;margin-bottom:1rem;font-size:1.5rem;color:#444}
   .images-container{background:#fff;border-radius:8px;padding:1rem;position:relative}
@@ -792,14 +1309,16 @@
   .image-item{display:inline-block;text-align:center;position:relative}
   .image-item img{max-height:400px;max-width:100%;border-radius:8px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.1);transition:transform .2s}
   .image-item img:hover{opacity:.9;transform:scale(1.02)}
-  .image-item p{margin-top:.5rem;font-size:.9rem;color:#555}
+  .image-item p{margin-top:.5rem;font-size:.1rem;color:#555}
   .empty-state,.loading,.no-results{text-align:center;padding:3rem;color:#888;font-style:italic}
   .add-btn-container{text-align:center;padding:2rem}
   .add-btn-container button{padding:1rem 2rem;font-size:1.1rem;background:#007bff;color:white;border:none;border-radius:50px;cursor:pointer}
   .add-btn-container button:hover{background:#0056b3}
-  .move-to-uploaded-btn,.move-all-jpgs-btn,.move-back-to-main-btn,.move-all-jpgs-back-btn{margin-top:1rem;padding:.8rem 1.8rem;color:white;border:none;border-radius:50px;font-weight:600;cursor:pointer;width:240px;font-size:.95rem}
+  .move-to-uploaded-btn,.move-to-another-folder-btn,.move-all-jpgs-btn,.move-back-to-main-btn,.move-all-jpgs-back-btn{margin-top:1rem;padding:.8rem 1.8rem;color:white;border:none;border-radius:50px;font-weight:600;cursor:pointer;width:240px;font-size:.95rem}
   .move-to-uploaded-btn{background:#10b981}
   .move-to-uploaded-btn:hover{background:#0d8b5f}
+  .move-to-another-folder-btn{background:#8b5cf6}
+  .move-to-another-folder-btn:hover{background:#7c3aed}
   .move-all-jpgs-btn{background:#f59e0b}
   .move-all-jpgs-btn:hover{background:#e68a00}
   .move-back-to-main-btn{background:#3b82f6}
@@ -812,12 +1331,93 @@
   .image-item.selected .checkbox::after{opacity:1}
   .image-item.selected .checkbox{border-color:#007bff}
   .image-item.selected img{outline:4px solid #007bff;outline-offset:-4px}
+  
+  /* Home View Styles - Round Covers with text wrap */
+  .home-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 2rem;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .folder-card {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    text-align: center;
+    padding: 1rem;
+  }
+  .folder-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  }
+  .folder-cover {
+    width: 120px;
+    height: 120px;
+    margin: 0 auto 1rem;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 3rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    box-shadow: 0 4px 12px rgba(99,102,241,0.3);
+  }
+  .folder-info {
+    text-align: center;
+  }
+  .folder-name {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+    word-wrap: break-word;
+    white-space: normal;
+    line-height: 1.3;
+    max-width: 100%;
+    padding: 0 5px;
+  }
+  .folder-count {
+    font-size: 0.9rem;
+    color: var(--text-light);
+  }
+  .no-previews {
+    text-align: center;
+    padding: 3rem;
+    color: #888;
+    font-style: italic;
+    grid-column: 1 / -1;
+  }
+  
+  /* Logout button */
+  .logout-btn {
+    margin-left: 1rem;
+    padding: .6rem 1.2rem;
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 50px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+  .logout-btn:hover {
+    background: #c82333;
+  }
+  
   .fab{position:fixed;bottom:2rem;right:2rem;background:var(--primary);width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:50;transition:transform .2s}
   .fab:hover{transform:scale(1.1)}
-  .modal,.fullscreen-modal,.bulk-upload-overlay,.confirm-modal,.rename-modal,.delete-folder-modal,.move-modal,.move-all-modal,.move-back-modal,.move-all-back-modal,.history-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);justify-content:center;align-items:center;z-index:100;padding:1rem}
-  .modal-content,.confirm-box,.bulk-upload-modal,.rename-box,.delete-folder-box,.move-box,.move-all-box,.move-back-box,.move-all-back-box,.history-modal .modal-content{background:#fff;padding:2rem;border-radius:12px;width:90%;max-width:420px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.2);animation:modalPop .3s ease}
+  .modal,.fullscreen-modal,.bulk-upload-overlay,.confirm-modal,.rename-modal,.delete-folder-modal,.move-modal,.move-all-modal,.move-back-modal,.move-all-back-modal,.move-to-folder-modal,.history-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);justify-content:center;align-items:center;z-index:100;padding:1rem}
+  .modal-content,.confirm-box,.bulk-upload-modal,.rename-box,.delete-folder-box,.move-box,.move-all-box,.move-back-box,.move-all-back-box,.move-to-folder-box,.history-modal .modal-content{background:#fff;padding:2rem;border-radius:12px;width:90%;max-width:420px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.2);animation:modalPop .3s ease}
   
-  /* HISTORY MODAL - Scrollable list + fixed close button */
+  /* HISTORY MODAL */
   .history-modal .modal-content {
     max-width: 600px;
     max-height: 85vh;
@@ -895,11 +1495,22 @@
     background: #138496;
   }
 
+  /* Folder select dropdown */
+  .folder-select {
+    width: 100%;
+    padding: .8rem;
+    margin: 1rem 0;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    background: white;
+  }
+
   @keyframes modalPop{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
-  .modal input[type=text], .rename-box input[type=text], .move-box textarea, .move-back-box textarea{width:100%;padding:.8rem;margin:1rem 0;border:1px solid #ddd;border-radius:8px;font-size:1rem}
-  .modal button,.confirm-box button,.bulk-modal-actions button,.rename-box button,.delete-folder-box button,.move-box button,.move-all-box button,.move-back-box button,.move-all-back-box button,.history-modal button{padding:.6rem 1.2rem;margin:.3rem;border:none;border-radius:50px;cursor:pointer;font-weight:600}
-  .modal button:first-of-type,.confirm-yes,.rename-yes,.delete-folder-yes,.move-yes,.move-all-yes,.move-back-yes,.move-all-back-yes{background:#dc3545;color:#fff}
-  .modal button:last-of-type,.confirm-no,.close-bulk,.rename-no,.delete-folder-no,.move-no,.move-all-no,.move-back-no,.move-all-back-no{background:#ccc;color:#333}
+  .modal input[type=text], .rename-box input[type=text], .move-box textarea, .move-back-box textarea, .move-to-folder-box textarea{width:100%;padding:.8rem;margin:1rem 0;border:1px solid #ddd;border-radius:8px;font-size:1rem}
+  .modal button,.confirm-box button,.bulk-modal-actions button,.rename-box button,.delete-folder-box button,.move-box button,.move-all-box button,.move-back-box button,.move-all-back-box button,.move-to-folder-box button,.history-modal button{padding:.6rem 1.2rem;margin:.3rem;border:none;border-radius:50px;cursor:pointer;font-weight:600}
+  .modal button:first-of-type,.confirm-yes,.rename-yes,.delete-folder-yes,.move-yes,.move-all-yes,.move-back-yes,.move-all-back-yes,.move-to-folder-yes{background:#dc3545;color:#fff}
+  .modal button:last-of-type,.confirm-no,.close-bulk,.rename-no,.delete-folder-no,.move-no,.move-all-no,.move-back-no,.move-all-back-no,.move-to-folder-no{background:#ccc;color:#333}
   .fullscreen-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.95);z-index:200;flex-direction:column;justify-content:center;align-items:center;color:#fff}
   .fullscreen-img{max-width:95%;max-height:80vh;border-radius:8px;box-shadow:0 0 30px rgba(0,0,0,.8)}
   .fullscreen-actions{margin-top:1.5rem;display:flex;gap:1.2rem;flex-wrap:wrap;justify-content:center}
@@ -938,14 +1549,18 @@
       width:90vw;
       max-width:280px;
       min-width:200px;
-      max-height:70vh;   /* Smaller max height on mobile */
+      max-height:70vh;
     }
     .top-controls{flex-direction:column}
     .search-wrapper{max-width:none}
-    .move-to-uploaded-btn,.move-all-jpgs-btn,.move-back-to-main-btn,.move-all-jpgs-back-btn{width:100%;max-width:240px}
+    .move-to-uploaded-btn,.move-to-another-folder-btn,.move-all-jpgs-btn,.move-back-to-main-btn,.move-all-jpgs-back-btn{width:100%;max-width:240px}
     .history-modal .modal-content {max-width: 95vw;}
     .history-item {flex-direction: column; gap: .5rem;}
     .history-item .copy-again {align-self: flex-end;}
+    .home-grid {grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 1rem; padding: 1rem;}
+    .folder-cover {width: 80px; height: 80px; font-size: 2rem;}
+    .folder-name {font-size: 0.9rem;}
+    .logout-btn {margin-left: 0; margin-top: 0.5rem;}
   }
 </style>
 
@@ -960,13 +1575,14 @@
 
     <div class="controls">
       <div class="top-controls">
-        <button class="active-folder-btn" id="active-folder-btn">Select a folder</button>
+        <button class="active-folder-btn" id="active-folder-btn">All Folders</button>
         <div class="folder-dropdown">
           <button class="folder-toggle" id="folder-toggle">FOLDERS ▼</button>
           <div class="folder-menu" id="folder-menu"></div>
         </div>
         <button class="history-btn" id="history-btn">Copied History</button>
-        <div class="search-wrapper">
+        <button class="logout-btn" id="logout-btn">Logout</button>
+        <div class="search-wrapper" id="search-wrapper" style="display:none">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" class="search-input" id="search-input" placeholder="Search by URL or filename...">
         </div>
@@ -974,13 +1590,15 @@
       <div class="selection-controls" id="selection-controls">
         <label><input type="checkbox" id="select-all-checkbox"> Select All</label>
         <button class="delete-selected-btn" id="delete-selected">Delete Selected (<span id="selected-count">0</span>)</button>
+        <button class="move-selected-uploaded-btn" id="move-selected-uploaded">Move Selected to Uploaded (<span id="selected-count-uploaded">0</span>)</button>
+        <button class="move-selected-folder-btn" id="move-selected-folder">Move Selected to Folder (<span id="selected-count-folder">0</span>)</button>
       </div>
     </div>
 
     <section class="gallery">
-      <h2 class="gallery-title" id="gallery-title">Select a folder</h2>
+      <h2 class="gallery-title" id="gallery-title">All Folders</h2>
       <div class="images-container" id="images-container">
-        <div class="empty-state">Create or select a folder to begin.</div>
+        <div class="loading">Loading folders...</div>
       </div>
       <div class="fab" id="fab-add">+</div>
     </section>
@@ -1015,9 +1633,31 @@
     <div class="move-modal" id="move-modal">
       <div class="move-box">
         <h3>Move Images to Uploaded</h3>
-        <p>Enter image URLs (comma-separated) or numbers (e.g., 1, 3, 5-7):</p>
-        <textarea id="move-indices" placeholder="https://..., 1, 5-8" rows="3"></textarea>
+        <p>Enter image URLs (comma-separated, with or without quotes):</p>
+        <textarea id="move-indices" placeholder='"url1", "url2", "url3" or url1, url2, url3' rows="3"></textarea>
         <div><button id="move-yes">Move</button><button id="move-no">Cancel</button></div>
+      </div>
+    </div>
+
+    <!-- Move to Another Folder Modal -->
+    <div class="move-to-folder-modal" id="move-to-folder-modal">
+      <div class="move-to-folder-box">
+        <h3>Move Images to Another Folder</h3>
+        <p>Select destination folder:</p>
+        <select class="folder-select" id="target-folder-select"></select>
+        <p>Enter image URLs (comma-separated, with or without quotes):</p>
+        <textarea id="move-to-folder-indices" placeholder='"url1", "url2", "url3" or url1, url2, url3' rows="3"></textarea>
+        <div><button id="move-to-folder-yes">Move</button><button id="move-to-folder-no">Cancel</button></div>
+      </div>
+    </div>
+
+    <!-- Move Selected to Folder Modal (for selection-based movement) -->
+    <div class="move-to-folder-modal" id="move-selected-folder-modal">
+      <div class="move-to-folder-box">
+        <h3>Move Selected Images to Folder</h3>
+        <p>Select destination folder:</p>
+        <select class="folder-select" id="move-selected-target-select"></select>
+        <div><button id="move-selected-folder-yes">Move Selected</button><button id="move-selected-folder-no">Cancel</button></div>
       </div>
     </div>
 
@@ -1033,8 +1673,8 @@
     <div class="move-back-modal" id="move-back-modal">
       <div class="move-back-box">
         <h3>Move Back to Main</h3>
-        <p>Enter image URLs (comma-separated):</p>
-        <textarea id="move-back-indices" placeholder="https://..." rows="3"></textarea>
+        <p>Enter image URLs (comma-separated, with or without quotes):</p>
+        <textarea id="move-back-indices" placeholder='"url1", "url2", "url3"' rows="3"></textarea>
         <div><button id="move-back-yes">Move Back</button><button id="move-back-no">Cancel</button></div>
       </div>
     </div>
@@ -1108,16 +1748,23 @@
 
 <script>
   const folders = <?= json_encode($folders) ?>;
+  const mainFolders = <?= json_encode($mainFolders) ?>;
   const activeBtn = document.getElementById('active-folder-btn');
   const folderToggle = document.getElementById('folder-toggle');
   const folderMenu = document.getElementById('folder-menu');
   const title = document.getElementById('gallery-title');
   const container = document.getElementById('images-container');
   const fab = document.getElementById('fab-add');
+  const searchWrapper = document.getElementById('search-wrapper');
+  const searchInput = document.getElementById('search-input');
   const selectionControls = document.getElementById('selection-controls');
   const selectAllCheckbox = document.getElementById('select-all-checkbox');
   const deleteSelectedBtn = document.getElementById('delete-selected');
+  const moveSelectedUploadedBtn = document.getElementById('move-selected-uploaded');
+  const moveSelectedFolderBtn = document.getElementById('move-selected-folder');
   const selectedCountSpan = document.getElementById('selected-count');
+  const selectedCountUploadedSpan = document.getElementById('selected-count-uploaded');
+  const selectedCountFolderSpan = document.getElementById('selected-count-folder');
   const confirmModal = document.getElementById('confirm-modal');
   const confirmCount = document.getElementById('confirm-count');
   const confirmYes = document.getElementById('confirm-yes');
@@ -1134,6 +1781,15 @@
   const moveUrls = document.getElementById('move-indices');
   const moveYes = document.getElementById('move-yes');
   const moveNo = document.getElementById('move-no');
+  const moveToFolderModal = document.getElementById('move-to-folder-modal');
+  const targetFolderSelect = document.getElementById('target-folder-select');
+  const moveToFolderIndices = document.getElementById('move-to-folder-indices');
+  const moveToFolderYes = document.getElementById('move-to-folder-yes');
+  const moveToFolderNo = document.getElementById('move-to-folder-no');
+  const moveSelectedFolderModal = document.getElementById('move-selected-folder-modal');
+  const moveSelectedTargetSelect = document.getElementById('move-selected-target-select');
+  const moveSelectedFolderYes = document.getElementById('move-selected-folder-yes');
+  const moveSelectedFolderNo = document.getElementById('move-selected-folder-no');
   const moveAllModal = document.getElementById('move-all-modal');
   const moveAllTarget = document.getElementById('move-all-target');
   const moveAllYes = document.getElementById('move-all-yes');
@@ -1149,95 +1805,183 @@
   const historyBtn = document.getElementById('history-btn');
   const historyModal = document.getElementById('history-modal');
   const historyList = document.getElementById('history-list');
+  const logoutBtn = document.getElementById('logout-btn');
 
-  const searchInput = document.getElementById('search-input');
   let allImages = [], filteredImages = [], searchTimer = null;
   let currentFolder = null, selectedImages = new Set(), bulkFiles = [], folderToRename = null, folderToDelete = null;
   let currentImageUrl = '';
+  let isHomeView = true;
+  let activityTimer = null;
+
+  // Check authentication periodically
+  function checkAuth() {
+    fetch('?action=check_auth')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.authenticated) {
+          window.location.reload();
+        }
+      });
+  }
+
+  // Set up activity monitoring for auto-logout
+  function resetActivityTimer() {
+    if (activityTimer) clearTimeout(activityTimer);
+    activityTimer = setTimeout(() => {
+      logout();
+    }, 30 * 60 * 1000); // 30 minutes
+  }
+
+  // Track user activity
+  ['click', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+    document.addEventListener(event, resetActivityTimer);
+  });
+
+  // Logout function
+  function logout() {
+    fetch('', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=logout'
+    })
+    .then(() => {
+      window.location.reload();
+    });
+  }
+
+  logoutBtn.onclick = logout;
+
+  // Start activity timer
+  resetActivityTimer();
 
   // Render Folder Menu
-  // Render Folder Menu – UPDATED with scrollable content
-function renderFolderMenu() {
-  folderMenu.innerHTML = '';
+  function renderFolderMenu() {
+    folderMenu.innerHTML = '';
 
-  // Create the scrollable content wrapper
-  const contentWrapper = document.createElement('div');
-  contentWrapper.className = 'folder-menu-content';
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'folder-menu-content';
 
-  // + Create New Folder (always at the top)
-  const createItem = document.createElement('div');
-  createItem.className = 'create-folder-item folder-item';
-  createItem.innerHTML = '+ Create New Folder';
-  createItem.onclick = e => { 
-    e.stopPropagation(); 
-    folderMenu.classList.remove('show'); 
-    document.getElementById('folder-modal').style.display = 'flex'; 
-  };
-  contentWrapper.appendChild(createItem);
+    const createItem = document.createElement('div');
+    createItem.className = 'create-folder-item folder-item';
+    createItem.innerHTML = '+ Create New Folder';
+    createItem.onclick = e => { 
+      e.stopPropagation(); 
+      folderMenu.classList.remove('show'); 
+      document.getElementById('folder-modal').style.display = 'flex'; 
+    };
+    contentWrapper.appendChild(createItem);
 
-  // Main folders
-  const main = folders.filter(f => !f.original);
-  main.forEach(f => renderFolderItem(f, contentWrapper));
+    const main = folders.filter(f => !f.original);
+    main.forEach(f => renderFolderItem(f, contentWrapper));
 
-  // Uploaded folders section
-  const uploaded = folders.filter(f => f.original);
-  if (uploaded.length > 0) {
-    const section = document.createElement('div');
-    section.className = 'uploaded-section folder-item';
-    section.innerText = 'Uploaded Collections';
-    contentWrapper.appendChild(section);
+    const uploaded = folders.filter(f => f.original);
+    if (uploaded.length > 0) {
+      const section = document.createElement('div');
+      section.className = 'uploaded-section folder-item';
+      section.innerText = 'Uploaded Collections';
+      contentWrapper.appendChild(section);
 
-    uploaded.forEach(f => renderFolderItem(f, contentWrapper, true));
+      uploaded.forEach(f => renderFolderItem(f, contentWrapper, true));
+    }
+
+    folderMenu.appendChild(contentWrapper);
   }
 
-  // Append the scrollable wrapper to the menu
-  folderMenu.appendChild(contentWrapper);
-}
+  function renderFolderItem(f, parent, isUploaded = false) {
+    const item = document.createElement('div');
+    item.className = 'folder-item';
+    item.innerHTML = `
+      <span class="folder-name" title="${f.name}">${f.name}</span>
+      ${!isUploaded ? `
+        <div class="folder-actions">
+          <button class="edit-btn" title="Rename">Edit</button>
+          <button class="delete-btn" title="Delete">Delete</button>
+        </div>
+      ` : ''}
+    `;
 
-function renderFolderItem(f, parent, isUploaded = false) {
-  const item = document.createElement('div');
-  item.className = 'folder-item';
-  item.innerHTML = `
-    <span class="folder-name" title="${f.name}">${f.name}</span>
-    ${!isUploaded ? `
-      <div class="folder-actions">
-        <button class="edit-btn" title="Rename">Edit</button>
-        <button class="delete-btn" title="Delete">Delete</button>
-      </div>
-    ` : ''}
-  `;
-
-  const nameSpan = item.querySelector('.folder-name');
-  nameSpan.onclick = e => { 
-    e.stopPropagation(); 
-    loadFolder(f.folder, f.name); 
-    folderMenu.classList.remove('show'); 
-  };
-
-  if (!isUploaded) {
-    item.querySelector('.edit-btn').onclick = e => { 
+    const nameSpan = item.querySelector('.folder-name');
+    nameSpan.onclick = e => { 
       e.stopPropagation(); 
-      folderToRename = f.folder; 
-      renameInput.value = f.name; 
-      renameModal.style.display = 'flex'; 
+      loadFolder(f.folder, f.name); 
       folderMenu.classList.remove('show'); 
     };
-    item.querySelector('.delete-btn').onclick = e => { 
-      e.stopPropagation(); 
-      folderToDelete = f.folder; 
-      deleteFolderName.textContent = f.name; 
-      deleteFolderModal.style.display = 'flex'; 
-      folderMenu.classList.remove('show'); 
-    };
+
+    if (!isUploaded) {
+      item.querySelector('.edit-btn').onclick = e => { 
+        e.stopPropagation(); 
+        folderToRename = f.folder; 
+        renameInput.value = f.name; 
+        renameModal.style.display = 'flex'; 
+        folderMenu.classList.remove('show'); 
+      };
+      item.querySelector('.delete-btn').onclick = e => { 
+        e.stopPropagation(); 
+        folderToDelete = f.folder; 
+        deleteFolderName.textContent = f.name; 
+        deleteFolderModal.style.display = 'flex'; 
+        folderMenu.classList.remove('show'); 
+      };
+    }
+
+    parent.appendChild(item);
   }
-
-  parent.appendChild(item);
-}
   renderFolderMenu();
 
   // Toggle Menu
   folderToggle.onclick = () => folderMenu.classList.toggle('show');
   document.addEventListener('click', e => { if (!folderToggle.contains(e.target) && !folderMenu.contains(e.target)) folderMenu.classList.remove('show'); });
+
+  // Load Home View (All Folders)
+  async function loadHomeView() {
+    isHomeView = true;
+    currentFolder = null;
+    activeBtn.textContent = 'All Folders';
+    title.textContent = 'All Folders';
+    container.innerHTML = '<div class="loading">Loading folders...</div>';
+    selectedImages.clear();
+    selectionControls.style.display = 'none';
+    searchWrapper.style.display = 'none';
+    fab.style.display = 'flex';
+
+    try {
+      const res = await fetch('?action=get_folders');
+      const folders = await res.json();
+
+      if (folders.length === 0) {
+        container.innerHTML = '<div class="empty-state">No folders yet. Click the + button to create one!</div>';
+        return;
+      }
+
+      const grid = document.createElement('div');
+      grid.className = 'home-grid';
+
+      folders.forEach(f => {
+        const card = document.createElement('div');
+        card.className = 'folder-card';
+        card.onclick = () => loadFolder(f.folder, f.name);
+        
+        // Get first and last letter for the cover
+        const firstLetter = f.name.charAt(0).toUpperCase();
+        const lastLetter = f.name.length > 1 ? f.name.charAt(f.name.length - 1).toUpperCase() : firstLetter;
+        
+        card.innerHTML = `
+          <div class="folder-cover">${firstLetter}${lastLetter}</div>
+          <div class="folder-info">
+            <div class="folder-name">${f.name}</div>
+            <div class="folder-count">${f.count} image${f.count !== 1 ? 's' : ''}</div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+
+      container.innerHTML = '';
+      container.appendChild(grid);
+    } catch (error) {
+      console.error('Error loading folders:', error);
+      container.innerHTML = '<div class="empty-state">Error loading folders. Please refresh.</div>';
+    }
+  }
 
   // Create Folder
   document.getElementById('cancel-create').onclick = () => document.getElementById('folder-modal').style.display = 'none';
@@ -1291,8 +2035,7 @@ function renderFolderItem(f, parent, isUploaded = false) {
         if (upIdx !== -1) folders.splice(upIdx, 1);
         renderFolderMenu();
         if (currentFolder === folderToDelete || currentFolder === upFolder) {
-          currentFolder = null; activeBtn.textContent = 'Select a folder'; title.textContent = 'Select a folder';
-          container.innerHTML = '<div class="empty-state">Create or select a folder to begin.</div>'; fab.style.display = 'none';
+          loadHomeView();
         }
       }
       deleteFolderModal.style.display = 'none'; folderToDelete = null;
@@ -1308,15 +2051,25 @@ function renderFolderItem(f, parent, isUploaded = false) {
   function showAlert(msg) { alertMessage.textContent = msg; alertModal.style.display = 'flex'; }
   alertOk.onclick = () => alertModal.style.display = 'none';
 
-  // Load Folder – AUTO-SAVE ALL IMAGE URLS
+  // Parse URLs with quotes
+  function parseUrlInput(input) {
+    return input.split(',')
+      .map(item => item.trim().replace(/^["']|["']$/g, ''))
+      .filter(item => item.length > 0);
+  }
+
+  // Load Folder
   async function loadFolder(folder, name) {
+    isHomeView = false;
     currentFolder = folder; 
     activeBtn.textContent = name; 
     title.textContent = `${name} Collection`;
     container.innerHTML = `<div class="loading">Loading images...</div>`;
     selectedImages.clear(); 
     selectionControls.style.display = 'none'; 
+    searchWrapper.style.display = 'block';
     searchInput.value = '';
+    fab.style.display = 'flex';
 
     const res   = await fetch(`?action=get_images&folder=${folder}`);
     const images = await res.json(); 
@@ -1360,23 +2113,146 @@ function renderFolderItem(f, parent, isUploaded = false) {
     const moveWrapper = document.createElement('div'); moveWrapper.style.textAlign = 'center';
     const isUploaded = currentFolder.endsWith('_uploaded');
     if (!isUploaded) {
-      moveWrapper.innerHTML = `<button class="move-to-uploaded-btn" id="move-to-uploaded-btn">Move to Uploaded</button><button class="move-all-jpgs-btn" id="move-all-jpgs-btn"  style="display:none";>Move All JPGs to Uploaded</button>`;
+      moveWrapper.innerHTML = `<button class="move-to-uploaded-btn" id="move-to-uploaded-btn">Move to Uploaded</button><button class="move-to-another-folder-btn" id="move-to-another-folder-btn">Move to Another Folder</button><button class="move-all-jpgs-btn" id="move-all-jpgs-btn" style="display:none";>Move All JPGs to Uploaded</button>`;
     } else {
       moveWrapper.innerHTML = `<button class="move-back-to-main-btn" id="move-back-to-main-btn">Move Back to Main</button><button class="move-all-jpgs-back-btn" id="move-all-jpgs-back-btn">Move All JPGs Back</button>`;
     }
     container.appendChild(moveWrapper);
     if (!isUploaded) {
-      document.getElementById('move-to-uploaded-btn').onclick = () => { moveUrls.placeholder = 'Paste full URLs or filenames (comma-separated)'; moveUrls.value = ''; moveModal.style.display = 'flex'; };
+      document.getElementById('move-to-uploaded-btn').onclick = () => { moveUrls.value = ''; moveModal.style.display = 'flex'; };
+      document.getElementById('move-to-another-folder-btn').onclick = () => { 
+        targetFolderSelect.innerHTML = '';
+        folders.filter(f => !f.original && f.folder !== currentFolder).forEach(f => {
+          const option = document.createElement('option');
+          option.value = f.folder;
+          option.textContent = f.name;
+          targetFolderSelect.appendChild(option);
+        });
+        moveToFolderIndices.value = '';
+        moveToFolderModal.style.display = 'flex';
+      };
       document.getElementById('move-all-jpgs-btn').onclick = () => { moveAllTarget.textContent = activeBtn.textContent + ' (Uploaded)'; moveAllModal.style.display = 'flex'; };
     } else {
-      document.getElementById('move-back-to-main-btn').onclick = () => { moveBackUrls.placeholder = 'Paste full URLs or filenames (comma-separated)'; moveBackUrls.value = ''; moveBackModal.style.display = 'flex'; };
+      document.getElementById('move-back-to-main-btn').onclick = () => { moveBackUrls.value = ''; moveBackModal.style.display = 'flex'; };
       document.getElementById('move-all-jpgs-back-btn').onclick = () => { moveAllBackTarget.textContent = activeBtn.textContent.replace(' (Uploaded)', ''); moveAllBackModal.style.display = 'flex'; };
     }
     fab.style.display = 'flex'; setupSelection();
   }
 
+  // Move to Uploaded
+  moveNo.onclick = () => { moveModal.style.display = 'none'; moveUrls.value = ''; };
+  moveYes.onclick = () => {
+    const raw = moveUrls.value.trim();
+    if (!raw) return showAlert('Paste at least one image URL.');
+    const urls = parseUrlInput(raw);
+    if (urls.length === 0) return showAlert('No valid URLs found.');
+    
+    fetch('', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `action=move_to_uploaded&folder=${currentFolder}&urls=${encodeURIComponent(urls.join(','))}`})
+    .then(r => r.json()).then(res => {
+      if (res.success) { 
+        moveModal.style.display = 'none'; 
+        moveUrls.value = ''; 
+        const message = res.failed && res.failed.length > 0 
+          ? `Moved ${res.moved} image(s) to uploaded. ${res.failed.length} invalid URL(s) ignored.`
+          : `Moved ${res.moved} image(s) to uploaded.`;
+        showAlert(message); 
+        loadFolder(currentFolder, activeBtn.textContent); 
+      }
+      else showAlert(res.message || 'Move failed');
+    });
+  };
+
+  // Move to Another Folder
+  moveToFolderNo.onclick = () => { moveToFolderModal.style.display = 'none'; moveToFolderIndices.value = ''; };
+  moveToFolderYes.onclick = () => {
+    const raw = moveToFolderIndices.value.trim();
+    const targetFolder = targetFolderSelect.value;
+    if (!raw) return showAlert('Paste at least one image URL.');
+    if (!targetFolder) return showAlert('Please select a destination folder.');
+    
+    const urls = parseUrlInput(raw);
+    if (urls.length === 0) return showAlert('No valid URLs found.');
+    
+    fetch('', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `action=move_to_folder&source_folder=${currentFolder}&target_folder=${targetFolder}&urls=${encodeURIComponent(urls.join(','))}`})
+    .then(r => r.json()).then(res => {
+      if (res.success) { 
+        moveToFolderModal.style.display = 'none'; 
+        moveToFolderIndices.value = ''; 
+        const message = res.failed && res.failed.length > 0 
+          ? `Moved ${res.moved} image(s) to ${targetFolderSelect.selectedOptions[0].textContent}. ${res.failed.length} invalid URL(s) ignored.`
+          : `Moved ${res.moved} image(s) to ${targetFolderSelect.selectedOptions[0].textContent}.`;
+        showAlert(message); 
+        loadFolder(currentFolder, activeBtn.textContent); 
+      }
+      else showAlert(res.message || 'Move failed');
+    });
+  };
+
+  // Move Selected to Uploaded
+  moveSelectedUploadedBtn.onclick = () => {
+    if (selectedImages.size === 0) return;
+    const paths = Array.from(selectedImages);
+    fetch('', {
+      method: 'POST', 
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'}, 
+      body: `action=move_selected&source_folder=${currentFolder}&target_folder=${currentFolder}_uploaded&paths=${encodeURIComponent(JSON.stringify(paths))}`
+    })
+    .then(r => r.json()).then(res => {
+      if (res.success) { 
+        selectedImages.clear(); 
+        const message = res.failed && res.failed.length > 0 
+          ? `Moved ${res.moved} image(s) to uploaded. ${res.failed.length} image(s) could not be moved.`
+          : `Moved ${res.moved} image(s) to uploaded.`;
+        showAlert(message); 
+        loadFolder(currentFolder, activeBtn.textContent); 
+      }
+      else showAlert(res.message || 'Move failed');
+    });
+  };
+
+  // Move Selected to Folder
+  moveSelectedFolderBtn.onclick = () => {
+    if (selectedImages.size === 0) return;
+    
+    moveSelectedTargetSelect.innerHTML = '';
+    folders.filter(f => !f.original && f.folder !== currentFolder).forEach(f => {
+      const option = document.createElement('option');
+      option.value = f.folder;
+      option.textContent = f.name;
+      moveSelectedTargetSelect.appendChild(option);
+    });
+    
+    moveSelectedFolderModal.style.display = 'flex';
+  };
+
+  moveSelectedFolderNo.onclick = () => { moveSelectedFolderModal.style.display = 'none'; };
+  moveSelectedFolderYes.onclick = () => {
+    const targetFolder = moveSelectedTargetSelect.value;
+    if (!targetFolder) return showAlert('Please select a destination folder.');
+    
+    const paths = Array.from(selectedImages);
+    fetch('', {
+      method: 'POST', 
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'}, 
+      body: `action=move_selected&source_folder=${currentFolder}&target_folder=${targetFolder}&paths=${encodeURIComponent(JSON.stringify(paths))}`
+    })
+    .then(r => r.json()).then(res => {
+      if (res.success) { 
+        moveSelectedFolderModal.style.display = 'none'; 
+        selectedImages.clear(); 
+        const message = res.failed && res.failed.length > 0 
+          ? `Moved ${res.moved} image(s) to ${moveSelectedTargetSelect.selectedOptions[0].textContent}. ${res.failed.length} image(s) could not be moved.`
+          : `Moved ${res.moved} image(s) to ${moveSelectedTargetSelect.selectedOptions[0].textContent}.`;
+        showAlert(message); 
+        loadFolder(currentFolder, activeBtn.textContent); 
+      }
+      else showAlert(res.message || 'Move failed');
+    });
+  };
+
   // Search
   searchInput.addEventListener('input', () => {
+    if (isHomeView) return;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       const term = searchInput.value.trim().toLowerCase();
@@ -1404,6 +2280,7 @@ function renderFolderItem(f, parent, isUploaded = false) {
     };
     deleteSelectedBtn.onclick = showConfirmModal;
   }
+  
   function toggleSelect(item) {
     const path = item.dataset.path;
     if (selectedImages.has(path)) { selectedImages.delete(path); item.classList.remove('selected'); }
@@ -1413,10 +2290,15 @@ function renderFolderItem(f, parent, isUploaded = false) {
     const sel = selectedImages.size;
     selectAllCheckbox.checked = (all === sel && sel > 0);
   }
+  
   function updateSelectionUI() {
     const cnt = selectedImages.size;
     selectedCountSpan.textContent = cnt;
+    selectedCountUploadedSpan.textContent = cnt;
+    selectedCountFolderSpan.textContent = cnt;
     deleteSelectedBtn.style.display = cnt > 0 ? 'inline-block' : 'none';
+    moveSelectedUploadedBtn.style.display = cnt > 0 && !currentFolder.endsWith('_uploaded') ? 'inline-block' : 'none';
+    moveSelectedFolderBtn.style.display = cnt > 0 && !currentFolder.endsWith('_uploaded') ? 'inline-block' : 'none';
   }
 
   // Confirm Delete
@@ -1431,18 +2313,6 @@ function renderFolderItem(f, parent, isUploaded = false) {
     const paths = Array.from(selectedImages);
     fetch('',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`action=delete_images&folder=${currentFolder}&paths=${encodeURIComponent(JSON.stringify(paths))}`})
     .then(r=>r.json()).then(res=>{ if (res.success) { selectedImages.clear(); loadFolder(currentFolder, activeBtn.textContent); } });
-  };
-
-  // Move to Uploaded
-  moveNo.onclick = () => { moveModal.style.display = 'none'; moveUrls.value = ''; };
-  moveYes.onclick = () => {
-    const raw = moveUrls.value.trim();
-    if (!raw) return showAlert('Paste at least one image URL or filename.');
-    fetch('', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `action=move_to_uploaded&folder=${currentFolder}&urls=${encodeURIComponent(raw)}`})
-    .then(r => r.json()).then(res => {
-      if (res.success) { moveModal.style.display = 'none'; moveUrls.value = ''; showAlert(`Moved ${res.moved} image(s) to uploaded.`); loadFolder(currentFolder, activeBtn.textContent); }
-      else showAlert(res.message || 'Move failed');
-    });
   };
 
   // Move All JPGs
@@ -1461,10 +2331,21 @@ function renderFolderItem(f, parent, isUploaded = false) {
   moveBackNo.onclick = () => { moveBackModal.style.display = 'none'; moveBackUrls.value = ''; };
   moveBackYes.onclick = () => {
     const raw = moveBackUrls.value.trim();
-    if (!raw) return showAlert('Paste at least one image URL or filename.');
-    fetch('', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `action=move_back_to_main&folder=${currentFolder}&urls=${encodeURIComponent(raw)}`})
+    if (!raw) return showAlert('Paste at least one image URL.');
+    const urls = parseUrlInput(raw);
+    if (urls.length === 0) return showAlert('No valid URLs found.');
+    
+    fetch('', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `action=move_back_to_main&folder=${currentFolder}&urls=${encodeURIComponent(urls.join(','))}`})
     .then(r => r.json()).then(res => {
-      if (res.success) { moveBackModal.style.display = 'none'; moveBackUrls.value = ''; showAlert(`Moved ${res.moved} image(s) back to main.`); loadFolder(currentFolder, activeBtn.textContent); }
+      if (res.success) { 
+        moveBackModal.style.display = 'none'; 
+        moveBackUrls.value = ''; 
+        const message = res.failed && res.failed.length > 0 
+          ? `Moved ${res.moved} image(s) back to main. ${res.failed.length} invalid URL(s) ignored.`
+          : `Moved ${res.moved} image(s) back to main.`;
+        showAlert(message); 
+        loadFolder(currentFolder, activeBtn.textContent); 
+      }
       else showAlert(res.message || 'Move back failed');
     });
   };
@@ -1484,6 +2365,10 @@ function renderFolderItem(f, parent, isUploaded = false) {
   // Bulk Upload
   fab.onclick = showBulkUpload;
   function showBulkUpload() {
+    if (isHomeView) {
+      document.getElementById('folder-modal').style.display = 'flex';
+      return;
+    }
     if (!currentFolder) return;
     document.getElementById('bulk-folder-name').textContent = activeBtn.textContent;
     document.getElementById('bulk-upload-overlay').style.display = 'flex';
@@ -1585,14 +2470,16 @@ function renderFolderItem(f, parent, isUploaded = false) {
   // ESC close
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){
-      [fullscreenModal, bulkOverlay, confirmModal, renameModal, deleteFolderModal, moveModal, moveAllModal, moveBackModal, moveAllBackModal, alertModal, historyModal].forEach(m=>m.style.display==='flex' && m.querySelector('button[onclick*="none"]')?.click());
+      [fullscreenModal, bulkOverlay, confirmModal, renameModal, deleteFolderModal, moveModal, moveToFolderModal, moveSelectedFolderModal, moveAllModal, moveBackModal, moveAllBackModal, alertModal, historyModal].forEach(m=>m.style.display==='flex' && m.querySelector('button[onclick*="none"]')?.click());
       folderMenu.classList.contains('show') && folderMenu.classList.remove('show');
     }
   });
 
-  // Auto-load first folder
-  if(folders.length>0) loadFolder(folders[0].folder, folders[0].name);
-  else activeBtn.textContent = 'No folders yet';
+  // Check authentication every minute
+  setInterval(checkAuth, 60000);
+
+  // Load home view by default
+  loadHomeView();
 
   function formatName(str){return str.replace(/_/g,' ').replace(/\b\w/g,l=>l.toUpperCase());}
 </script>
