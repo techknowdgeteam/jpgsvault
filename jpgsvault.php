@@ -219,6 +219,59 @@
   }
 
   // ---------------------------------------------------------------
+  // SYNC ALL_URLS WITH ACTUAL FOLDER DATA (ON PAGE LOAD)
+  // ---------------------------------------------------------------
+  
+  // Function to sync all_urls with actual folder data
+  function syncAllUrls($pdo) {
+      $allUrls = [];
+      $totalUrls = 0;
+      
+      // Get all main folders (non-uploaded)
+      $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault_table");
+      while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
+          $field = $col['Field'];
+          // Skip system columns and uploaded folders
+          if ($field !== 'id' && 
+              $field !== 'copied_links' && 
+              $field !== 'server_passkey' && 
+              !isUploadedFolder($field) &&
+              $field !== 'all_urls' &&
+              $field !== 'all_urls_uploaded') {
+              
+              // Get images from this folder
+              $images = getImagesInFolder($pdo, $field);
+              
+              // Filter to only valid (existing) images
+              $validImages = array_filter($images, function($p) {
+                  return file_exists($p);
+              });
+              
+              // Add to all URLs
+              if (!empty($validImages)) {
+                  $allUrls = array_merge($allUrls, array_values($validImages));
+                  $totalUrls += count($validImages);
+              }
+          }
+      }
+      
+      // Add metadata
+      $allUrls[] = "total_urls: " . $totalUrls;
+      
+      // Save to all_urls column
+      $pdo->prepare("UPDATE jpgsvault_table SET all_urls = ? WHERE id = 1")
+          ->execute([json_encode($allUrls)]);
+      
+      return $totalUrls;
+  }
+
+  // SYNC on page load - This will empty and repopulate all_urls
+  $syncedCount = syncAllUrls($pdo);
+  
+  // Log the sync
+  error_log("JPGS Vault: Synced all_urls with " . $syncedCount . " valid URLs on page load");
+
+  // ---------------------------------------------------------------
   // CLEAN STALE COPIED LINKS ON PAGE LOAD (optional but recommended)
   $stmt = $pdo->prepare("SELECT copied_links FROM jpgsvault_table WHERE id = 1");
   $stmt->execute();
@@ -356,6 +409,9 @@
           $current = getImagesInFolder($pdo, $folder);
           $all = array_merge($current, $uploaded);
           saveImagesToFolder($pdo, $folder, $all);
+          
+          // SYNC all_urls after upload
+          syncAllUrls($pdo);
       }
       // FIX: Use the correct baseUrl helper
       $baseUrl = baseUrl();
@@ -857,6 +913,10 @@
       purgeCopiedLog($pdo, $paths);  // <-- CLEAN LOG
       $dir = "jpgs/$folder/";
       rmdirIfEmpty($dir);
+      
+      // SYNC all_urls after deletion
+      syncAllUrls($pdo);
+      
       echo json_encode(['success'=>true]);
       exit;
   }
