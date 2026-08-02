@@ -12,6 +12,43 @@
         die("Connection failed: " . $e->getMessage());
     }
 
+    // ===== GET COPIED LINKS DATA FROM JPGSVAULT =====
+    function getCopiedLinksData($pdo) {
+        try {
+            $stmt = $pdo->query("SELECT copied_links FROM jpgsvault WHERE id = 1");
+            $json = $stmt->fetchColumn();
+            if (!$json) return [];
+            
+            $logs = json_decode($json, true);
+            if (!is_array($logs)) return [];
+            
+            // Group by folder and count URLs
+            $folderData = [];
+            foreach ($logs as $log) {
+                if (!isset($log['folder']) || !isset($log['url'])) continue;
+                $folder = $log['folder'];
+                $url = $log['url'];
+                
+                if (!isset($folderData[$folder])) {
+                    $folderData[$folder] = [
+                        'folder' => $folder,
+                        'urls' => [],
+                        'count' => 0
+                    ];
+                }
+                
+                if (!in_array($url, $folderData[$folder]['urls'])) {
+                    $folderData[$folder]['urls'][] = $url;
+                    $folderData[$folder]['count']++;
+                }
+            }
+            
+            return $folderData;
+        } catch (PDOException $e) {
+            return [];
+        }
+    }
+
     // Handle Save All - Saves to respective columns
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
         try {
@@ -30,6 +67,9 @@
             if (!is_array($timeordersData)) $timeordersData = [];
             if (!is_array($countriesData)) $countriesData = [];
             if (!is_array($dynamicFieldsData)) $dynamicFieldsData = [];
+            
+            // Auto-repair settings: ensure it's always an array of objects
+            $settingsData = repairSettings($settingsData);
             
             // Check if record exists
             $stmt = $pdo->query("SELECT COUNT(*) FROM serenum_config");
@@ -88,6 +128,36 @@
         }
     }
 
+    // Helper function to repair settings structure
+    function repairSettings($settings) {
+        // If not an array, return empty array
+        if (!is_array($settings)) {
+            return [];
+        }
+        
+        // If it's already an indexed array of objects, just filter out non-objects
+        if (isset($settings[0]) && is_array($settings[0])) {
+            return array_values(array_filter($settings, function($item) {
+                return is_array($item) && isset($item['author']);
+            }));
+        }
+        
+        // If it's a single object with 'author' key, wrap it in an array
+        if (isset($settings['author'])) {
+            return [$settings];
+        }
+        
+        // Try to extract objects with 'author' key
+        $result = [];
+        foreach ($settings as $key => $value) {
+            if (is_array($value) && isset($value['author'])) {
+                $result[] = $value;
+            }
+        }
+        
+        return $result;
+    }
+
     // Handle Update Status
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         try {
@@ -104,37 +174,16 @@
                     $settings = json_decode($row['settings'], true) ?: [];
                     if (!is_array($settings)) $settings = [];
                     
-                    // If settings is an object with numeric keys, convert to array
-                    if (is_object($settings)) {
-                        $settings = (array) $settings;
-                    }
-                    
-                    // If settings is not an indexed array, wrap it
-                    if (!isset($settings[0]) && !empty($settings) && !isset($settings['author'])) {
-                        $settings = [$settings];
-                    }
-                    
-                    // If settings is empty or not an array, initialize
-                    if (empty($settings) || !is_array($settings)) {
-                        $settings = [];
-                    }
+                    // Repair settings
+                    $settings = repairSettings($settings);
                     
                     // Find the configuration with matching author
                     $found = false;
-                    if (!isset($settings[0])) {
-                        // If it's a single object
-                        if (isset($settings['author'])) {
-                            $settings['status'] = $status;
+                    foreach ($settings as &$config) {
+                        if (is_array($config) && isset($config['author']) && $config['author'] === $status) {
+                            $config['status'] = $status;
                             $found = true;
-                        }
-                    } else {
-                        // It's an array of configs
-                        foreach ($settings as $index => &$config) {
-                            if (is_array($config) && isset($config['author'])) {
-                                $config['status'] = $status;
-                                $found = true;
-                                break;
-                            }
+                            break;
                         }
                     }
                     
@@ -158,13 +207,10 @@
                             'author_caption' => [],
                             'author_account_url' => [],
                             'status' => $status,
-                            'dynamic_values' => []
+                            'dynamic_values' => [],
+                            'operation_status' => ''
                         ];
-                        if (empty($settings)) {
-                            $settings = [$newConfig];
-                        } else {
-                            $settings[] = $newConfig;
-                        }
+                        $settings[] = $newConfig;
                     }
                     
                     // Update the database
@@ -203,16 +249,14 @@
                     $settings = json_decode($row['settings'], true) ?: [];
                     if (!is_array($settings)) $settings = [];
                     
-                    if (isset($settings[0])) {
-                        // Filter out the config with matching author
-                        $settings = array_filter($settings, function($config) use ($author) {
-                            return !(is_array($config) && isset($config['author']) && $config['author'] === $author);
-                        });
-                        // Re-index array
-                        $settings = array_values($settings);
-                    } else if (isset($settings['author']) && $settings['author'] === $author) {
-                        $settings = [];
-                    }
+                    $settings = repairSettings($settings);
+                    
+                    // Filter out the config with matching author
+                    $settings = array_filter($settings, function($config) use ($author) {
+                        return !(is_array($config) && isset($config['author']) && $config['author'] === $author);
+                    });
+                    // Re-index array
+                    $settings = array_values($settings);
                     
                     // Update the database
                     $stmt = $pdo->prepare("UPDATE serenum_config SET settings = :settings WHERE id = :id");
@@ -245,17 +289,14 @@
                 if ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                     $settings = json_decode($row['settings'], true) ?: [];
                     if (!is_array($settings)) $settings = [];
+                    $settings = repairSettings($settings);
                     
                     $foundConfig = null;
-                    if (isset($settings[0])) {
-                        foreach ($settings as $config) {
-                            if (is_array($config) && isset($config['author']) && $config['author'] === $author) {
-                                $foundConfig = $config;
-                                break;
-                            }
+                    foreach ($settings as $config) {
+                        if (is_array($config) && isset($config['author']) && $config['author'] === $author) {
+                            $foundConfig = $config;
+                            break;
                         }
-                    } else if (isset($settings['author']) && $settings['author'] === $author) {
-                        $foundConfig = $settings;
                     }
                     
                     if ($foundConfig) {
@@ -305,28 +346,20 @@
     if (!is_array($countries_data)) $countries_data = [];
     if (!is_array($dynamic_fields_data)) $dynamic_fields_data = [];
 
+    // Auto-repair settings data
+    $settings_data = repairSettings($settings_data);
+
     // Get configurations list from settings
     $configurations = [];
     if (!empty($settings_data)) {
-        // Check if settings is an array of configs or a single config
         if (isset($settings_data[0]) && is_array($settings_data[0])) {
             $configurations = $settings_data;
         } else if (isset($settings_data['author'])) {
             $configurations = [$settings_data];
-        } else if (is_array($settings_data)) {
-            // Try to extract configs
-            foreach ($settings_data as $key => $value) {
-                if (is_array($value) && isset($value['author'])) {
-                    $configurations[] = $value;
-                }
-            }
-            if (empty($configurations) && !empty($settings_data)) {
-                $configurations = [$settings_data];
-            }
         }
     }
 
-    // Ensure each config has a status and engine
+    // Ensure each config has a status, engine and operation_status
     foreach ($configurations as &$config) {
         if (!isset($config['status']) || empty($config['status'])) {
             $config['status'] = 'pending';
@@ -342,6 +375,9 @@
         }
         if (!isset($config['dynamic_values']) || empty($config['dynamic_values'])) {
             $config['dynamic_values'] = [];
+        }
+        if (!isset($config['operation_status']) || empty($config['operation_status'])) {
+            $config['operation_status'] = '';
         }
     }
 
@@ -375,6 +411,9 @@
         'aborted' => '#fc8181',
         'incomplete' => '#a0aec0'
     ];
+
+    // Get copied links data for use in JavaScript
+    $copiedLinksData = getCopiedLinksData($pdo);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -816,6 +855,7 @@
             letter-spacing: 0.5px;
         }
         
+        /* ===== CONFIG ITEM DETAILS - SCROLLABLE FIELDS ===== */
         .config-item .item-details .detail-value {
             font-size: 14px;
             color: #2c3e50;
@@ -823,6 +863,79 @@
             overflow-wrap: break-word;
             max-width: 100%;
             line-height: 1.5;
+            max-height: 120px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        /* Custom scrollbar for detail values */
+        .config-item .item-details .detail-value::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .config-item .item-details .detail-value::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.05);
+            border-radius: 4px;
+        }
+
+        .config-item .item-details .detail-value::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #2ecc71, #3498db);
+            border-radius: 4px;
+        }
+
+        .config-item .item-details .detail-value::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #27ae60, #2980b9);
+        }
+
+        /* For Firefox */
+        .config-item .item-details .detail-value {
+            scrollbar-width: thin;
+            scrollbar-color: #2ecc71 rgba(0,0,0,0.05);
+        }
+
+        /* Ensure the field container doesn't overflow */
+        .config-item .item-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px 20px;
+            margin-top: 10px;
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        /* Make sure long JSON strings wrap properly */
+        .config-item .item-details .detail-value pre,
+        .config-item .item-details .detail-value code {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-width: 100%;
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8fcf9;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin: 0;
+        }
+
+        /* Optional: Add a subtle gradient fade for long content */
+        .config-item .item-details .detail-value.long-content {
+            position: relative;
+        }
+
+        .config-item .item-details .detail-value.long-content::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: linear-gradient(to bottom, transparent, #f8fcf9);
+            pointer-events: none;
+            display: none;
+        }
+
+        .config-item .item-details .detail-value.long-content.has-scroll::after {
+            display: block;
         }
         
         .config-item .item-actions {
@@ -1412,76 +1525,445 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+            overflow: hidden !important;
         }
-        
+
         .datetime-group .date-input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e0ece8;
-            border-radius: 10px;
-            font-size: 14px;
-            transition: all 0.3s;
-            box-sizing: border-box;
-            background: #fafdfc;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            padding: 12px 16px !important;
+            border: 2px solid #e0ece8 !important;
+            border-radius: 10px !important;
+            font-size: 14px !important;
+            transition: all 0.3s !important;
+            box-sizing: border-box !important;
+            background: #fafdfc !important;
+            display: block !important;
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            height: 50px;
         }
-        
+
         .datetime-group .date-input:focus {
-            border-color: #2ecc71;
-            outline: none;
-            box-shadow: 0 0 0 4px rgba(46,204,113,0.1);
-            background: white;
+            border-color: #2ecc71 !important;
+            outline: none !important;
+            box-shadow: 0 0 0 4px rgba(46,204,113,0.1) !important;
+            background: white !important;
         }
-        
+
         .datetime-group .time-group {
             display: flex;
             gap: 10px;
             align-items: center;
             flex-wrap: wrap;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
         }
-        
+
         .datetime-group .time-group input[type="number"] {
-            width: 60px;
-            padding: 10px;
-            border: 2px solid #e0ece8;
-            border-radius: 10px;
-            font-size: 14px;
-            transition: all 0.3s;
-            background: #fafdfc;
+            width: 60px !important;
+            min-width: 45px !important;
+            max-width: 80px !important;
+            padding: 10px !important;
+            border: 2px solid #e0ece8 !important;
+            border-radius: 10px !important;
+            font-size: 14px !important;
+            transition: all 0.3s !important;
+            background: #fafdfc !important;
+            box-sizing: border-box !important;
         }
-        
+
         .datetime-group .time-group input[type="number"]:focus {
-            border-color: #2ecc71;
-            outline: none;
-            box-shadow: 0 0 0 4px rgba(46,204,113,0.1);
-            background: white;
+            border-color: #2ecc71 !important;
+            outline: none !important;
+            box-shadow: 0 0 0 4px rgba(46,204,113,0.1) !important;
+            background: white !important;
+        }
+
+        .datetime-group .time-group select {
+            padding: 10px !important;
+            border: 2px solid #e0ece8 !important;
+            border-radius: 10px !important;
+            font-size: 14px !important;
+            transition: all 0.3s !important;
+            background: #fafdfc !important;
+            width: 80px !important;
+            min-width: 70px !important;
+            box-sizing: border-box !important;
+        }
+
+        .datetime-group .time-group select:focus {
+            border-color: #2ecc71 !important;
+            outline: none !important;
+            box-shadow: 0 0 0 4px rgba(46,204,113,0.1) !important;
+            background: white !important;
+        }
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 768px) {
+            .config-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .form-row, .form-row-3 { grid-template-columns: 1fr; }
+            .tab-btn { 
+                padding: 12px 15px; 
+                font-size: 13px; 
+            }
+            .schedule-time-group { flex-direction: column; align-items: stretch; }
+            .main-header h1 { font-size: 17px; }
+            .main-header { padding: 10px 15px; height: 55px; }
+            .main-header .header-back {
+                padding: 8px 15px;
+                margin-right: 5px;
+                height: auto;
+            }
+            .scroll-body { top: 55px; }
+            .scroll-body.tabs-visible { top: 125px; }
+            .tabs { 
+                top: 55px;
+                padding: 6px 0;
+            }
+            .schedule-date-input { max-width: 100%; }
+            .timeorder-item .time-list {
+                grid-template-columns: 1fr;
+            }
+            .modal-box { max-width: 95%; padding: 20px; }
+            .time-input-group input[type="number"] { width: 60px; }
+            .time-input-group select { width: 80px; }
+            .dashboard-title { font-size: 22px; flex-direction: column; align-items: flex-start; }
+            .config-item .item-details {
+                grid-template-columns: 1fr;
+            }
+            .config-item .item-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .detail-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .save-btn-container { 
+                bottom: 15px; 
+                right: 15px;
+                gap: 10px;
+            }
+            .save-btn-container .btn { 
+                padding: 12px 25px; 
+                font-size: 15px;
+                min-width: 150px;
+            }
+            .edit-mode-banner {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .container {
+                padding: 15px;
+            }
+            .item-row .item-info {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 5px;
+            }
+            .item-row .item-info .key {
+                min-width: auto;
+            }
+            
+            .datetime-group {
+                width: 100% !important;
+                max-width: 100% !important;
+                overflow: hidden !important;
+            }
+            
+            .datetime-group .date-input {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                font-size: 16px !important;
+                padding: 12px 14px !important;
+                box-sizing: border-box !important;
+            }
+            
+            .datetime-group .time-group {
+                width: 100% !important;
+                max-width: 100% !important;
+                flex-wrap: wrap !important;
+                gap: 8px !important;
+            }
+            
+            .datetime-group .time-group input[type="number"] {
+                width: 50px !important;
+                min-width: 40px !important;
+                padding: 8px !important;
+                font-size: 14px !important;
+                flex: 0 1 auto !important;
+            }
+            
+            .datetime-group .time-group select {
+                width: 70px !important;
+                min-width: 60px !important;
+                padding: 8px !important;
+                font-size: 14px !important;
+            }
+            
+            .submit-as-select {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .submit-as-select select {
+                width: 100%;
+                min-width: unset;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .config-card {
+                min-height: 130px;
+                padding: 20px !important;
+            }
+            .config-card .card-icon { font-size: 28px; }
+            .config-card .card-title { font-size: 17px; }
+            .save-btn-container .btn { 
+                padding: 10px 20px; 
+                font-size: 13px;
+                min-width: 120px;
+            }
+            
+            .datetime-group {
+                width: 100% !important;
+                max-width: 100% !important;
+                overflow: hidden !important;
+            }
+            
+            .datetime-group .date-input {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                font-size: 16px !important;
+                padding: 10px 12px !important;
+                box-sizing: border-box !important;
+            }
+            
+            .datetime-group .time-group {
+                width: 100% !important;
+                max-width: 100% !important;
+                gap: 6px !important;
+                flex-wrap: wrap !important;
+                justify-content: flex-start !important;
+            }
+            
+            .datetime-group .time-group input[type="number"] {
+                width: 45px !important;
+                min-width: 35px !important;
+                padding: 8px !important;
+                font-size: 14px !important;
+                flex: 0 1 auto !important;
+            }
+            
+            .datetime-group .time-group select {
+                width: 60px !important;
+                min-width: 55px !important;
+                padding: 8px !important;
+                font-size: 14px !important;
+            }
+            
+            .time-format-select {
+                flex-wrap: wrap !important;
+                gap: 8px !important;
+            }
+            
+            .time-format-select select {
+                width: 100% !important;
+                min-width: unset !important;
+            }
         }
         
-        .datetime-group .time-group select {
-            padding: 10px;
+        /* ===== LIST INPUT STYLES ===== */
+        .list-input-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+            flex-wrap: wrap;
+        }
+        
+        .list-input-container input {
+            flex: 1;
+            min-width: 150px;
+        }
+        
+        .list-values {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+        
+        .list-values .value-tag {
+            background: linear-gradient(135deg, #e8f4f8, #d4e9f0);
+            padding: 4px 12px;
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #2c3e50;
+            border: 1px solid #c8dce8;
+        }
+        
+        .list-values .value-tag .remove-value {
+            cursor: pointer;
+            color: #e74c3c;
+            font-weight: 600;
+            font-size: 14px;
+            line-height: 1;
+        }
+        
+        .list-values .value-tag .remove-value:hover {
+            color: #c0392b;
+        }
+        
+        /* ===== SOURCE SELECT ===== */
+        .source-select-container {
+            margin-top: 10px;
+        }
+        
+        .source-select-container select {
+            width: 100%;
+            padding: 10px 14px;
             border: 2px solid #e0ece8;
             border-radius: 10px;
             font-size: 14px;
-            transition: all 0.3s;
             background: #fafdfc;
-            width: 80px;
         }
         
-        .datetime-group .time-group select:focus {
+        .source-select-container select:focus {
             border-color: #2ecc71;
             outline: none;
             box-shadow: 0 0 0 4px rgba(46,204,113,0.1);
-            background: white;
         }
         
-        .datetime-group .time-display-24h {
-            background: linear-gradient(135deg, #e8f4f8, #d4e9f0);
-            padding: 8px 15px;
+        
+        /* ===== TIME FORMAT SELECT ===== */
+        .time-format-select {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 8px;
+            padding: 8px 12px;
+            background: #f8fcf9;
             border-radius: 8px;
-            border: 1px solid #2ecc71;
-            color: #2ecc71;
-            font-weight: 600;
+            border: 1px solid #e0ece8;
+        }
+        
+        .time-format-select label {
+            margin-bottom: 0 !important;
+            font-weight: 500 !important;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+        
+        .time-format-select select {
+            padding: 6px 12px;
+            border: 2px solid #e0ece8;
+            border-radius: 6px;
+            font-size: 14px;
+            background: #fafdfc;
+            width: auto;
             min-width: 80px;
-            text-align: center;
+        }
+        
+        .time-format-select select:focus {
+            border-color: #2ecc71;
+            outline: none;
+        }
+
+        /* ===== SUBMIT AS SELECT ===== */
+        .submit-as-select {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 8px;
+            padding: 8px 12px;
+            background: #f0faf5;
+            border-radius: 8px;
+            border: 1px solid #c8e0d8;
+        }
+        
+        .submit-as-select label {
+            margin-bottom: 0 !important;
+            font-weight: 500 !important;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+        
+        .submit-as-select select {
+            padding: 6px 12px;
+            border: 2px solid #c8e0d8;
+            border-radius: 6px;
+            font-size: 14px;
+            background: #fafdfc;
+            width: auto;
+            min-width: 180px;
+        }
+        
+        .submit-as-select select:focus {
+            border-color: #2ecc71;
+            outline: none;
+        }
+        
+        .submit-as-preview {
+            margin-top: 5px;
+            padding: 6px 12px;
+            background: #f8fcf9;
+            border-radius: 6px;
+            border: 1px dashed #c8e0d8;
+            font-size: 12px;
+            color: #5a7a8a;
+            font-family: monospace;
+            word-break: break-all;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        
+        /* ===== OPERATION STATUS BADGE ===== */
+        .operation-status-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .operation-status-badge.running {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .operation-status-badge.paused {
+            background: #f6ad55;
+            color: white;
+        }
+        
+        .operation-status-badge.stopped {
+            background: #fc8181;
+            color: white;
+        }
+        
+        .operation-status-badge.completed {
+            background: #4299e1;
+            color: white;
+        }
+        
+        .operation-status-badge.failed {
+            background: #e53e3e;
+            color: white;
         }
         
         /* ===== RESPONSIVE ===== */
@@ -1558,6 +2040,23 @@
                 flex-direction: row;
                 flex-wrap: wrap;
             }
+            
+            .datetime-group .time-group input[type="number"] {
+                width: 50px;
+            }
+            .datetime-group .time-group select {
+                width: 70px;
+            }
+            
+            .submit-as-select {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .submit-as-select select {
+                width: 100%;
+                min-width: unset;
+            }
         }
         
         @media (max-width: 480px) {
@@ -1630,7 +2129,7 @@
                         $count = count($grouped_configs[$status] ?? []);
                         $label = $status_labels[$status] ?? ucfirst($status);
                         $color = $status_colors[$status] ?? '#a0aec0';
-                        $icon = ($status == 'pending') ? '' : (($status == 'successful') ? '' : (($status == 'aborted') ? '' : ''));
+                        $icon = ($status == 'pending') ? '⏳' : (($status == 'successful') ? '✅' : (($status == 'aborted') ? '❌' : '⚠️'));
                     ?>
                     <div class="config-card status-card <?php echo $status; ?>" onclick="showDetailView('<?php echo $status; ?>')">
                         <div class="card-status-badge"><?php echo ucfirst($status); ?></div>
@@ -1789,10 +2288,22 @@
         dynamic_fields: <?php echo json_encode($dynamic_fields_data); ?>
     };
     
+    // ===== COPIED LINKS DATA FROM JPGSVAULT =====
+    let copiedLinksData = <?php echo json_encode($copiedLinksData); ?>;
+    
     let configId = <?php echo $config_id ?? 0; ?>;
     let isEditMode = false;
     let editingAuthor = '';
     let editingDynamicFieldKey = null;
+    
+    // Store time format preference per field
+    let timeFormatPreferences = {};
+    
+    // Store submit as preference per field
+    let submitAsPreferences = {};
+    
+    // Store list values for modal
+    let _newListValues = [];
     
     // Ensure proper data types
     if (!configData.accounts || typeof configData.accounts !== 'object' || Array.isArray(configData.accounts)) {
@@ -2004,23 +2515,16 @@
         const settings = configData.settings;
         const configs = [];
         
-        if (!settings) return configs;
+        if (!settings || !Array.isArray(settings)) return configs;
         
-        if (Array.isArray(settings)) {
-            settings.forEach(config => {
-                if (config && typeof config === 'object' && config.author) {
-                    const configStatus = (config.status || 'pending').toLowerCase();
-                    if (configStatus === status) {
-                        configs.push(config);
-                    }
+        settings.forEach(config => {
+            if (config && typeof config === 'object' && config.author) {
+                const configStatus = (config.status || 'pending').toLowerCase();
+                if (configStatus === status) {
+                    configs.push(config);
                 }
-            });
-        } else if (typeof settings === 'object' && settings.author) {
-            const configStatus = (settings.status || 'pending').toLowerCase();
-            if (configStatus === status) {
-                configs.push(settings);
             }
-        }
+        });
         
         return configs;
     }
@@ -2065,23 +2569,28 @@
                 if (entries.length > 0) {
                     dynamicFieldsHtml = '<div><div class="detail-label">Dynamic Fields</div>';
                     entries.forEach(([key, value]) => {
-                        // If value is an object with date/time components, format it
                         let displayValue = value;
                         if (typeof value === 'object' && value !== null) {
-                            if (value.date && value.time_24h) {
-                                displayValue = value.date + ' ' + value.time_24h;
-                            } else if (value.date) {
-                                displayValue = value.date;
-                            } else if (value.time_24h) {
-                                displayValue = value.time_24h;
-                            } else {
-                                displayValue = JSON.stringify(value);
-                            }
+                            displayValue = JSON.stringify(value);
                         }
                         dynamicFieldsHtml += `<div class="detail-value"><strong>${key}:</strong> ${displayValue}</div>`;
                     });
                     dynamicFieldsHtml += '</div>';
                 }
+            }
+            
+            // Add operation status if present
+            let operationStatusHtml = '';
+            if (config.operation_status) {
+                const statusClass = config.operation_status.toLowerCase();
+                operationStatusHtml = `
+                    <div style="margin-top: 10px;">
+                        <div class="detail-label">Operation Status</div>
+                        <div class="detail-value">
+                            <span class="operation-status-badge ${statusClass}">${config.operation_status}</span>
+                        </div>
+                    </div>
+                `;
             }
             
             div.innerHTML = `
@@ -2091,6 +2600,7 @@
                 </div>
                 <div class="item-details">
                     ${dynamicFieldsHtml}
+                    ${operationStatusHtml}
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-edit-config" onclick="showEditConfig('${config.author}')">Edit</button>
@@ -2271,7 +2781,7 @@
                     <span class="value">${url}</span>
                     ${profileLink ? '<span class="value" style="color:#667eea;">Link: ' + profileLink + '</span>' : ''}
                 </div>
-                <button class="btn btn-danger" onclick="deleteAccount(\'' + key + '\')">Delete</button>
+                <button class="btn btn-danger" onclick="deleteAccount('${key}')">Delete</button>
             `;
             container.appendChild(div);
         }
@@ -2357,6 +2867,12 @@
                     <button class="btn btn-primary" onclick="addTimeToExistingOrder('${key}')">Add Time</button>
                     <div id="add_time_${key}" style="display:none; margin-top:10px;">
                         <div class="time-input-group">
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                                <span style="font-weight:500;">24h:</span>
+                                <input type="number" id="time_hour_24_${key}" placeholder="HH" min="0" max="23" style="width:80px; padding:10px;">
+                                <span>:</span>
+                                <input type="number" id="time_minute_24_${key}" placeholder="MM" min="0" max="59" style="width:80px; padding:10px;">
+                            </div>
                             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                                 <span style="font-weight:500;">12h:</span>
                                 <input type="number" id="time_hour_12_${key}" placeholder="HH" min="1" max="12" style="width:80px; padding:10px;">
@@ -2366,12 +2882,6 @@
                                     <option value="AM">AM</option>
                                     <option value="PM">PM</option>
                                 </select>
-                            </div>
-                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
-                                <span style="font-weight:500;">24h:</span>
-                                <input type="number" id="time_hour_24_${key}" placeholder="HH" min="0" max="23" style="width:80px; padding:10px;">
-                                <span>:</span>
-                                <input type="number" id="time_minute_24_${key}" placeholder="MM" min="0" max="59" style="width:80px; padding:10px;">
                             </div>
                             <div style="margin-top:10px;">
                                 <button class="btn btn-success" onclick="saveTimeToOrder('${key}')">Add to List</button>
@@ -2423,22 +2933,33 @@
             div.className = 'dynamic-field-item';
             
             const defaultValues = field.default_values || [];
-            const useAccountUrls = field.use_account_urls || false;
-            const useCountries = field.use_countries || false;
+            const sourceType = field.source_type || 'none';
+            const allowList = field.allow_list || false;
             const title = field.title || key;
+            const submitAs = field.submit_as || 'key';
             
             let sourceInfo = '';
-            if (useAccountUrls) sourceInfo += ' | Uses Account URLs';
-            if (useCountries) sourceInfo += ' | Uses Countries';
+            if (sourceType === 'accounts') sourceInfo = ' | Source: Account URLs';
+            else if (sourceType === 'captions') sourceInfo = ' | Source: Captions';
+            else if (sourceType === 'timeorders') sourceInfo = ' | Source: Time Orders';
+            else if (sourceType === 'countries') sourceInfo = ' | Source: Countries';
+            else if (sourceType === 'copied_links') sourceInfo = ' | Source: Copied Links (JPGS Vault)';
+            
+            let submitAsLabel = '';
+            if (submitAs === 'key') submitAsLabel = 'Submit: Key Only';
+            else if (submitAs === 'value') submitAsLabel = 'Submit: Value Only';
+            else if (submitAs === 'both') submitAsLabel = 'Submit: Key & Value';
             
             div.innerHTML = `
                 <div class="field-header">
                     <span class="field-name">${title} (${key})</span>
-                    <span class="field-type-badge">${field.element_type || 'input'}</span>
+                    <span class="field-type-badge">${field.element_type || 'input'}${allowList ? ' + List' : ''}</span>
                 </div>
                 <div style="color: #5a7a8a; font-size: 13px;">
                     ${field.element_type === 'select' ? 'Options: ' + (defaultValues.length > 0 ? defaultValues.join(', ') : 'None') : ''}
                     ${sourceInfo}
+                    ${allowList ? ' | Allows adding custom values' : ''}
+                    ${submitAsLabel ? ' | ' + submitAsLabel : ''}
                 </div>
                 <div class="default-values">
                     ${defaultValues.map(val => `<span class="value-tag">${val}</span>`).join('')}
@@ -2454,6 +2975,7 @@
     
     function showAddDynamicFieldModal() {
         _newDefaultValues = [];
+        _newListValues = [];
         editingDynamicFieldKey = null;
         
         const html = `
@@ -2470,31 +2992,51 @@
             <div class="form-group">
                 <label>Element Type</label>
                 <select id="modal_element_type" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="select">Select</option>
                     <option value="input">Input</option>
                     <option value="textarea">Textarea</option>
-                    <option value="select">Select</option>
                     <option value="date-time-input">Date & Time</option>
                 </select>
             </div>
+            <div class="form-group" id="modal_allow_list_container" style="display:none;">
+                <label>Allow Adding Custom Values (List Input)</label>
+                <select id="modal_allow_list" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="no">No - Single value only</option>
+                    <option value="yes">Yes - Allow multiple values (add/remove)</option>
+                </select>
+                <small style="color:#999;">If Yes, users can add multiple values to this field</small>
+            </div>
             <div class="form-group" id="modal_default_values_container">
-                <label>Default Values (for Select type)</label>
+                <label>Default Values</label>
                 <div style="display:flex; gap:10px; margin-bottom:10px;">
                     <input type="text" id="modal_default_value_input" placeholder="Enter value..." style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
                     <button class="btn btn-primary" onclick="addModalDefaultValue()">Add</button>
                 </div>
                 <div id="modal_default_values_list"></div>
             </div>
-            <div class="form-group" id="modal_source_options_container" style="display:none;">
-                <label>Source Options From</label>
-                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:5px;">
-                    <label style="font-weight:400; display:flex; align-items:center; gap:5px; cursor:pointer;">
-                        <input type="checkbox" id="modal_use_account_urls" value="yes"> Use Account URLs
-                    </label>
-                    <label style="font-weight:400; display:flex; align-items:center; gap:5px; cursor:pointer;">
-                        <input type="checkbox" id="modal_use_countries" value="yes"> Use Countries
-                    </label>
-                </div>
+            <div class="form-group" id="modal_source_container">
+                <label>Source Options From (for Select type)</label>
+                <select id="modal_source_type" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="none">None - Use default values only</option>
+                    <option value="accounts">Account URLs</option>
+                    <option value="captions">Captions</option>
+                    <option value="timeorders">Time Orders</option>
+                    <option value="countries">Countries</option>
+                    <option value="copied_links">Copied Links (JPGS Vault)</option>
+                </select>
                 <small style="color:#999;">Select which data source to populate the dropdown with</small>
+            </div>
+            <div class="form-group" id="modal_submit_as_container">
+                <label>Submit As</label>
+                <select id="modal_submit_as" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="key">Submit Key Only</option>
+                    <option value="value">Submit Value Only</option>
+                    <option value="both">Submit Key & Value</option>
+                </select>
+                <small style="color:#999;">Choose what data to submit to the backend</small>
+                <div id="modal_submit_preview" class="submit-as-preview" style="margin-top:5px; padding:6px 12px; background:#f8fcf9; border-radius:6px; border:1px dashed #c8e0d8; font-size:12px; color:#5a7a8a; font-family:monospace;">
+                    Example: "key" → "value"
+                </div>
             </div>
             <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2505,17 +3047,15 @@
         showModal('Add Dynamic Field', '', null, html);
         renderModalDefaultValues();
         
-        // Toggle default values and source options visibility based on element type
+        // Toggle visibility based on element type
         document.getElementById('modal_element_type').addEventListener('change', function() {
-            const container = document.getElementById('modal_default_values_container');
-            const sourceContainer = document.getElementById('modal_source_options_container');
-            if (this.value === 'select') {
-                container.style.display = 'block';
-                sourceContainer.style.display = 'block';
-            } else {
-                container.style.display = 'none';
-                sourceContainer.style.display = 'none';
-            }
+            const isSelect = this.value === 'select';
+            const isInput = this.value === 'input';
+            
+            document.getElementById('modal_default_values_container').style.display = (isSelect || isInput) ? 'block' : 'none';
+            document.getElementById('modal_source_container').style.display = isSelect ? 'block' : 'none';
+            document.getElementById('modal_allow_list_container').style.display = isInput ? 'block' : 'none';
+            document.getElementById('modal_submit_as_container').style.display = isSelect ? 'block' : 'none';
         });
         
         // Auto-generate field name from title
@@ -2530,6 +3070,24 @@
         document.getElementById('modal_field_name').addEventListener('input', function() {
             this.dataset.manual = 'true';
         });
+        
+        // Update preview when submit as changes
+        document.getElementById('modal_submit_as').addEventListener('change', function() {
+            updateSubmitPreview(this.value);
+        });
+    }
+    
+    function updateSubmitPreview(value) {
+        const preview = document.getElementById('modal_submit_preview');
+        if (!preview) return;
+        
+        if (value === 'key') {
+            preview.innerHTML = 'Example: "key"';
+        } else if (value === 'value') {
+            preview.innerHTML = 'Example: "value"';
+        } else if (value === 'both') {
+            preview.innerHTML = 'Example: {"key": "value"}';
+        }
     }
     
     function editDynamicField(key) {
@@ -2538,6 +3096,7 @@
         if (!field) return;
         
         _newDefaultValues = field.default_values || [];
+        _newListValues = field.list_values || [];
         
         const html = `
             <div class="form-group">
@@ -2553,31 +3112,51 @@
             <div class="form-group">
                 <label>Element Type</label>
                 <select id="modal_element_type" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="select" ${field.element_type === 'select' ? 'selected' : ''}>Select</option>
                     <option value="input" ${field.element_type === 'input' ? 'selected' : ''}>Input</option>
                     <option value="textarea" ${field.element_type === 'textarea' ? 'selected' : ''}>Textarea</option>
-                    <option value="select" ${field.element_type === 'select' ? 'selected' : ''}>Select</option>
                     <option value="date-time-input" ${field.element_type === 'date-time-input' ? 'selected' : ''}>Date & Time</option>
                 </select>
             </div>
-            <div class="form-group" id="modal_default_values_container" style="${field.element_type === 'select' ? 'display:block' : 'display:none'}">
-                <label>Default Values (for Select type)</label>
+            <div class="form-group" id="modal_allow_list_container" style="${field.element_type === 'input' ? 'display:block' : 'display:none'}">
+                <label>Allow Adding Custom Values (List Input)</label>
+                <select id="modal_allow_list" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="no" ${field.allow_list ? '' : 'selected'}>No - Single value only</option>
+                    <option value="yes" ${field.allow_list ? 'selected' : ''}>Yes - Allow multiple values (add/remove)</option>
+                </select>
+                <small style="color:#999;">If Yes, users can add multiple values to this field</small>
+            </div>
+            <div class="form-group" id="modal_default_values_container" style="${field.element_type === 'select' || field.element_type === 'input' ? 'display:block' : 'display:none'}">
+                <label>Default Values ${field.element_type === 'input' ? '(Pre-filled values)' : ''}</label>
                 <div style="display:flex; gap:10px; margin-bottom:10px;">
                     <input type="text" id="modal_default_value_input" placeholder="Enter value..." style="flex:1; padding:10px; border:1px solid #ddd; border-radius:6px;">
                     <button class="btn btn-primary" onclick="addModalDefaultValue()">Add</button>
                 </div>
                 <div id="modal_default_values_list"></div>
             </div>
-            <div class="form-group" id="modal_source_options_container" style="${field.element_type === 'select' ? 'display:block' : 'display:none'}">
-                <label>Source Options From</label>
-                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:5px;">
-                    <label style="font-weight:400; display:flex; align-items:center; gap:5px; cursor:pointer;">
-                        <input type="checkbox" id="modal_use_account_urls" value="yes" ${field.use_account_urls ? 'checked' : ''}> Use Account URLs
-                    </label>
-                    <label style="font-weight:400; display:flex; align-items:center; gap:5px; cursor:pointer;">
-                        <input type="checkbox" id="modal_use_countries" value="yes" ${field.use_countries ? 'checked' : ''}> Use Countries
-                    </label>
-                </div>
+            <div class="form-group" id="modal_source_container" style="${field.element_type === 'select' ? 'display:block' : 'display:none'}">
+                <label>Source Options From (for Select type)</label>
+                <select id="modal_source_type" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="none" ${field.source_type === 'none' || !field.source_type ? 'selected' : ''}>None - Use default values only</option>
+                    <option value="accounts" ${field.source_type === 'accounts' ? 'selected' : ''}>Account URLs</option>
+                    <option value="captions" ${field.source_type === 'captions' ? 'selected' : ''}>Captions</option>
+                    <option value="timeorders" ${field.source_type === 'timeorders' ? 'selected' : ''}>Time Orders</option>
+                    <option value="countries" ${field.source_type === 'countries' ? 'selected' : ''}>Countries</option>
+                    <option value="copied_links" ${field.source_type === 'copied_links' ? 'selected' : ''}>Copied Links (JPGS Vault)</option>
+                </select>
                 <small style="color:#999;">Select which data source to populate the dropdown with</small>
+            </div>
+            <div class="form-group" id="modal_submit_as_container" style="${field.element_type === 'select' ? 'display:block' : 'display:none'}">
+                <label>Submit As</label>
+                <select id="modal_submit_as" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                    <option value="key" ${field.submit_as === 'key' || !field.submit_as ? 'selected' : ''}>Submit Key Only</option>
+                    <option value="value" ${field.submit_as === 'value' ? 'selected' : ''}>Submit Value Only</option>
+                    <option value="both" ${field.submit_as === 'both' ? 'selected' : ''}>Submit Key & Value</option>
+                </select>
+                <small style="color:#999;">Choose what data to submit to the backend</small>
+                <div id="modal_submit_preview" class="submit-as-preview" style="margin-top:5px; padding:6px 12px; background:#f8fcf9; border-radius:6px; border:1px dashed #c8e0d8; font-size:12px; color:#5a7a8a; font-family:monospace;">
+                    ${field.submit_as === 'key' || !field.submit_as ? 'Example: "key"' : field.submit_as === 'value' ? 'Example: "value"' : 'Example: {"key": "value"}'}
+                </div>
             </div>
             <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2588,17 +3167,20 @@
         showModal('Edit Dynamic Field', '', null, html);
         renderModalDefaultValues();
         
-        // Toggle default values and source options visibility based on element type
+        // Toggle visibility based on element type
         document.getElementById('modal_element_type').addEventListener('change', function() {
-            const container = document.getElementById('modal_default_values_container');
-            const sourceContainer = document.getElementById('modal_source_options_container');
-            if (this.value === 'select') {
-                container.style.display = 'block';
-                sourceContainer.style.display = 'block';
-            } else {
-                container.style.display = 'none';
-                sourceContainer.style.display = 'none';
-            }
+            const isSelect = this.value === 'select';
+            const isInput = this.value === 'input';
+            
+            document.getElementById('modal_default_values_container').style.display = (isSelect || isInput) ? 'block' : 'none';
+            document.getElementById('modal_source_container').style.display = isSelect ? 'block' : 'none';
+            document.getElementById('modal_allow_list_container').style.display = isInput ? 'block' : 'none';
+            document.getElementById('modal_submit_as_container').style.display = isSelect ? 'block' : 'none';
+        });
+        
+        // Update preview when submit as changes
+        document.getElementById('modal_submit_as').addEventListener('change', function() {
+            updateSubmitPreview(this.value);
         });
     }
     
@@ -2625,7 +3207,7 @@
         container.innerHTML = '';
         
         if (_newDefaultValues.length === 0) {
-            container.innerHTML = '<p style="color: #999; font-size: 14px;">No default values added.</p>';
+            container.innerHTML = '<p style="color: #999; font-size: 14px;">No values added.</p>';
             return;
         }
         
@@ -2645,8 +3227,9 @@
         const title = document.getElementById('modal_field_title').value.trim();
         let fieldName = document.getElementById('modal_field_name').value.trim();
         const elementType = document.getElementById('modal_element_type').value;
-        const useAccountUrls = document.getElementById('modal_use_account_urls') ? document.getElementById('modal_use_account_urls').checked : false;
-        const useCountries = document.getElementById('modal_use_countries') ? document.getElementById('modal_use_countries').checked : false;
+        const sourceType = document.getElementById('modal_source_type').value;
+        const allowList = document.getElementById('modal_allow_list').value === 'yes';
+        const submitAs = document.getElementById('modal_submit_as') ? document.getElementById('modal_submit_as').value : 'key';
         
         if (!title) {
             showModal('Error', 'Please enter a display title.');
@@ -2672,9 +3255,10 @@
         const fieldData = {
             title: title,
             element_type: elementType,
-            default_values: elementType === 'select' ? _newDefaultValues : [],
-            use_account_urls: useAccountUrls && elementType === 'select',
-            use_countries: useCountries && elementType === 'select'
+            default_values: (elementType === 'select' || elementType === 'input') ? _newDefaultValues : [],
+            source_type: (elementType === 'select' && sourceType !== 'none') ? sourceType : 'none',
+            allow_list: elementType === 'input' ? allowList : false,
+            submit_as: (elementType === 'select' && sourceType !== 'none') ? submitAs : 'key'
         };
         
         // If editing, remove old key and add new one (if name changed - but we don't allow name change in edit)
@@ -2707,6 +3291,183 @@
         });
     }
     
+    // ===== GET SOURCE VALUES =====
+    // ===== GET SOURCE VALUES =====
+    function getSourceValues(sourceType, submitAs) {
+        const values = [];
+        
+        if (sourceType === 'accounts') {
+            const accounts = configData.accounts || {};
+            for (const [key, value] of Object.entries(accounts)) {
+                const url = value.schedule && value.schedule[0] ? value.schedule[0] : '';
+                if (url) {
+                    let submitData = '';
+                    
+                    if (submitAs === 'key') {
+                        submitData = key;
+                    } else if (submitAs === 'value') {
+                        submitData = url;
+                    } else if (submitAs === 'both') {
+                        submitData = JSON.stringify({ [key]: url });
+                    }
+                    
+                    values.push({ 
+                        key: key, 
+                        value: url,
+                        display: key + ' → ' + url,
+                        submitData: submitData,
+                        submitAs: submitAs,
+                        isGrouped: false
+                    });
+                }
+            }
+        } else if (sourceType === 'captions') {
+            const captions = configData.captions || [];
+            
+            // Group captions by author name
+            const authorCaptionMap = {};
+            
+            captions.forEach(item => {
+                if (item.name && item.captions && item.captions.length > 0) {
+                    // Store all captions for this author
+                    const captionObjects = item.captions.map(caption => ({
+                        'key-name': item.name,
+                        'id': caption.id,
+                        'description': caption.description
+                    }));
+                    
+                    // If author already exists, merge captions
+                    if (authorCaptionMap[item.name]) {
+                        authorCaptionMap[item.name] = authorCaptionMap[item.name].concat(captionObjects);
+                    } else {
+                        authorCaptionMap[item.name] = captionObjects;
+                    }
+                } else if (item.name && (!item.captions || item.captions.length === 0)) {
+                    // Author with no captions
+                    if (!authorCaptionMap[item.name]) {
+                        authorCaptionMap[item.name] = [];
+                    }
+                }
+            });
+            
+            // Now create entries for each unique author
+            for (const [authorName, captionsList] of Object.entries(authorCaptionMap)) {
+                let submitData = '';
+                
+                if (submitAs === 'key') {
+                    // Submit only the author name as a string
+                    submitData = authorName;
+                } else if (submitAs === 'value') {
+                    // Submit the array of caption objects
+                    submitData = JSON.stringify(captionsList);
+                } else if (submitAs === 'both') {
+                    // Submit the array of caption objects with key-name as the author
+                    submitData = JSON.stringify(captionsList);
+                }
+                
+                // Display just the author name in the dropdown
+                const displayText = authorName + (captionsList.length > 0 ? ` (${captionsList.length} captions)` : ' (no captions)');
+                
+                values.push({ 
+                    key: authorName,
+                    value: captionsList,
+                    display: displayText,
+                    submitData: submitData,
+                    submitAs: submitAs,
+                    isGrouped: true,
+                    captionCount: captionsList.length
+                });
+            }
+            
+        } else if (sourceType === 'timeorders') {
+            const timeOrders = configData.timeorders || {};
+            
+            // For each time order, submit all times
+            for (const [orderName, timesList] of Object.entries(timeOrders)) {
+                let submitData = '';
+                
+                if (submitAs === 'key') {
+                    // Submit only the order name as a string
+                    submitData = orderName;
+                } else if (submitAs === 'value') {
+                    // Submit the array of time objects
+                    submitData = JSON.stringify(timesList);
+                } else if (submitAs === 'both') {
+                    // Submit the array of time objects
+                    submitData = JSON.stringify(timesList);
+                }
+                
+                // Display just the order name in the dropdown
+                const displayText = orderName + (Array.isArray(timesList) && timesList.length > 0 ? ` (${timesList.length} times)` : ' (no times)');
+                
+                values.push({ 
+                    key: orderName,
+                    value: timesList, // Store the full times array
+                    display: displayText,
+                    submitData: submitData,
+                    submitAs: submitAs,
+                    isGrouped: true,
+                    timeCount: timesList.length
+                });
+            }
+            
+        } else if (sourceType === 'countries') {
+            const countries = configData.countries || [];
+            countries.forEach(country => {
+                let submitData = '';
+                if (submitAs === 'key') {
+                    submitData = country;
+                } else if (submitAs === 'value') {
+                    submitData = country;
+                } else if (submitAs === 'both') {
+                    submitData = JSON.stringify({ [country]: country });
+                }
+                
+                values.push({ 
+                    key: country, 
+                    value: country,
+                    display: country,
+                    submitData: submitData,
+                    submitAs: submitAs,
+                    isGrouped: false
+                });
+            });
+        } else if (sourceType === 'copied_links') {
+            // Special handling for copied links
+            const copiedLinks = copiedLinksData || {};
+            for (const [folder, data] of Object.entries(copiedLinks)) {
+                const urlCount = data.count || 0;
+                const urls = data.urls || [];
+                
+                let displayLabel = `${folder} (${urlCount} URLs)`;
+                let submitData = '';
+                
+                if (submitAs === 'key') {
+                    // Submit folder name with count: "folder a 20"
+                    submitData = `${folder} ${urlCount}`;
+                } else if (submitAs === 'value') {
+                    // Submit all URLs as JSON array of strings: ["url1", "url2", ...]
+                    submitData = JSON.stringify(urls);
+                } else if (submitAs === 'both') {
+                    // Submit as key-value: {"foldername": "url1, url2, ..."}
+                    submitData = JSON.stringify({ [folder]: urls.join(', ') });
+                }
+                
+                values.push({
+                    key: folder,
+                    value: urls,
+                    display: displayLabel,
+                    submitData: submitData,
+                    submitAs: submitAs,
+                    urlCount: urlCount,
+                    urls: urls,
+                    isGrouped: false
+                });
+            }
+        }
+        return values;
+    }
+    
     // ===== RENDER DYNAMIC FIELDS IN ADD CONFIG VIEW =====
     function renderDynamicFields() {
         const container = document.getElementById('dynamicFieldsContainer');
@@ -2731,8 +3492,6 @@
                         break;
                     }
                 }
-            } else if (settings && settings.author === editingAuthor && settings.dynamic_values) {
-                dynamicValues = settings.dynamic_values;
             }
         }
         
@@ -2742,17 +3501,14 @@
             window._dynamicValuesToLoad = null;
         }
         
-        // Get account keys and countries for dynamic options
-        const accountKeys = Object.keys(configData.accounts || {});
-        const countries = configData.countries || [];
-        
         for (const key of fieldKeys) {
             const field = fields[key];
             const elementType = field.element_type || 'input';
             const title = field.title || key;
             const defaultValues = field.default_values || [];
-            const useAccountUrls = field.use_account_urls || false;
-            const useCountries = field.use_countries || false;
+            const sourceType = field.source_type || 'none';
+            const allowList = field.allow_list || false;
+            const submitAs = field.submit_as || 'key';
             
             const div = document.createElement('div');
             div.className = 'form-group';
@@ -2765,33 +3521,88 @@
             const value = dynamicValues[key] || '';
             
             if (elementType === 'date-time-input') {
-                // Create date-time input with 12/24 hour conversion
-                inputElement = document.createElement('div');
-                inputElement.className = 'datetime-group';
+                // Create date-time input with 12/24 hour select
+                const wrapper = document.createElement('div');
+                wrapper.className = 'datetime-group';
+                wrapper.style.width = '100%';
+                wrapper.style.maxWidth = '100%';
+                wrapper.style.boxSizing = 'border-box';
                 
                 // Date input
                 const dateInput = document.createElement('input');
                 dateInput.type = 'date';
                 dateInput.id = 'dynamic_field_' + key + '_date';
                 dateInput.className = 'date-input';
+                dateInput.style.width = '100%';
+                dateInput.style.maxWidth = '100%';
+                dateInput.style.boxSizing = 'border-box';
                 
                 // Set date value if exists
-                if (value && typeof value === 'object' && value.date) {
-                    dateInput.value = value.date;
-                } else if (typeof value === 'string' && value.includes('/')) {
-                    const parts = value.split(' ');
-                    if (parts.length > 0 && parts[0].includes('/')) {
-                        const dateParts = parts[0].split('/');
-                        if (dateParts.length === 3) {
-                            const formattedDate = dateParts[2] + '-' + dateParts[1].padStart(2, '0') + '-' + dateParts[0].padStart(2, '0');
-                            dateInput.value = formattedDate;
+                if (value && typeof value === 'string') {
+                    if (value.includes('/')) {
+                        const parts = value.split(' ');
+                        if (parts.length > 0 && parts[0].includes('/')) {
+                            const dateParts = parts[0].split('/');
+                            if (dateParts.length === 3) {
+                                const formattedDate = dateParts[2] + '-' + dateParts[1].padStart(2, '0') + '-' + dateParts[0].padStart(2, '0');
+                                dateInput.value = formattedDate;
+                            }
                         }
+                    } else if (value.includes('-')) {
+                        dateInput.value = value.split(' ')[0] || '';
+                    }
+                } else if (value && typeof value === 'object') {
+                    if (value.date) {
+                        dateInput.value = value.date;
                     }
                 }
                 
-                // Time group
+                // Time format select
+                const formatDiv = document.createElement('div');
+                formatDiv.className = 'time-format-select';
+                formatDiv.style.cssText = 'display:flex; align-items:center; gap:12px; margin-top:8px; padding:8px 12px; background:#f8fcf9; border-radius:8px; border:1px solid #e0ece8; flex-wrap:wrap;';
+                
+                const formatLabel = document.createElement('label');
+                formatLabel.textContent = 'Submit in format:';
+                formatLabel.style.marginBottom = '0 !important';
+                formatLabel.style.fontWeight = '500 !important';
+                formatLabel.style.color = '#2c3e50';
+                formatLabel.style.fontSize = '14px';
+                
+                const formatSelect = document.createElement('select');
+                formatSelect.id = 'dynamic_field_' + key + '_format';
+                formatSelect.style.cssText = 'padding:6px 12px; border:2px solid #e0ece8; border-radius:6px; font-size:14px; background:#fafdfc; width:auto; min-width:80px;';
+                
+                const option12 = document.createElement('option');
+                option12.value = '12h';
+                option12.textContent = '12h';
+                formatSelect.appendChild(option12);
+                
+                const option24 = document.createElement('option');
+                option24.value = '24h';
+                option24.textContent = '24h';
+                formatSelect.appendChild(option24);
+                
+                // Set initial format preference
+                const prefKey = key;
+                if (timeFormatPreferences[prefKey] === undefined) {
+                    timeFormatPreferences[prefKey] = '12h';
+                }
+                formatSelect.value = timeFormatPreferences[prefKey];
+                
+                formatDiv.appendChild(formatLabel);
+                formatDiv.appendChild(formatSelect);
+                
+                // Time input group - will be shown/hidden based on format
                 const timeGroup = document.createElement('div');
+                timeGroup.id = 'dynamic_field_' + key + '_time_group';
                 timeGroup.className = 'time-group';
+                timeGroup.style.cssText = 'display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%; margin-top:10px;';
+                
+                // 12-hour inputs
+                const twelveHourDiv = document.createElement('div');
+                twelveHourDiv.id = 'dynamic_field_' + key + '_12h_group';
+                twelveHourDiv.style.cssText = 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;';
                 
                 const hour12 = document.createElement('input');
                 hour12.type = 'number';
@@ -2799,12 +3610,7 @@
                 hour12.placeholder = 'HH';
                 hour12.min = '1';
                 hour12.max = '12';
-                hour12.style.width = '60px';
-                hour12.style.padding = '10px';
-                hour12.style.border = '2px solid #e0ece8';
-                hour12.style.borderRadius = '10px';
-                hour12.style.fontSize = '14px';
-                hour12.style.background = '#fafdfc';
+                hour12.style.cssText = 'width:60px; padding:10px; border:2px solid #e0ece8; border-radius:10px; font-size:14px; background:#fafdfc;';
                 
                 const colon1 = document.createElement('span');
                 colon1.textContent = ':';
@@ -2815,21 +3621,11 @@
                 minute12.placeholder = 'MM';
                 minute12.min = '0';
                 minute12.max = '59';
-                minute12.style.width = '60px';
-                minute12.style.padding = '10px';
-                minute12.style.border = '2px solid #e0ece8';
-                minute12.style.borderRadius = '10px';
-                minute12.style.fontSize = '14px';
-                minute12.style.background = '#fafdfc';
+                minute12.style.cssText = 'width:60px; padding:10px; border:2px solid #e0ece8; border-radius:10px; font-size:14px; background:#fafdfc;';
                 
                 const ampmSelect = document.createElement('select');
                 ampmSelect.id = 'dynamic_field_' + key + '_ampm';
-                ampmSelect.style.width = '80px';
-                ampmSelect.style.padding = '10px';
-                ampmSelect.style.border = '2px solid #e0ece8';
-                ampmSelect.style.borderRadius = '10px';
-                ampmSelect.style.fontSize = '14px';
-                ampmSelect.style.background = '#fafdfc';
+                ampmSelect.style.cssText = 'width:80px; padding:10px; border:2px solid #e0ece8; border-radius:10px; font-size:14px; background:#fafdfc;';
                 
                 const amOption = document.createElement('option');
                 amOption.value = 'AM';
@@ -2841,101 +3637,92 @@
                 pmOption.textContent = 'PM';
                 ampmSelect.appendChild(pmOption);
                 
-                const arrow = document.createElement('span');
-                arrow.textContent = ' → ';
-                arrow.style.margin = '0 10px';
+                twelveHourDiv.appendChild(hour12);
+                twelveHourDiv.appendChild(colon1);
+                twelveHourDiv.appendChild(minute12);
+                twelveHourDiv.appendChild(ampmSelect);
                 
-                const timeDisplay = document.createElement('div');
-                timeDisplay.className = 'time-display-24h';
-                timeDisplay.id = 'dynamic_field_' + key + '_display_24h';
-                timeDisplay.textContent = '--:--';
+                // 24-hour inputs
+                const twentyFourDiv = document.createElement('div');
+                twentyFourDiv.id = 'dynamic_field_' + key + '_24h_group';
+                twentyFourDiv.style.cssText = 'display:none; gap:10px; align-items:center; flex-wrap:wrap;';
                 
-                timeGroup.appendChild(hour12);
-                timeGroup.appendChild(colon1);
-                timeGroup.appendChild(minute12);
-                timeGroup.appendChild(ampmSelect);
-                timeGroup.appendChild(arrow);
-                timeGroup.appendChild(timeDisplay);
+                const hour24 = document.createElement('input');
+                hour24.type = 'number';
+                hour24.id = 'dynamic_field_' + key + '_hour_24';
+                hour24.placeholder = 'HH';
+                hour24.min = '0';
+                hour24.max = '23';
+                hour24.style.cssText = 'width:60px; padding:10px; border:2px solid #e0ece8; border-radius:10px; font-size:14px; background:#fafdfc;';
                 
-                inputElement.appendChild(dateInput);
-                inputElement.appendChild(timeGroup);
+                const colon2 = document.createElement('span');
+                colon2.textContent = ':';
                 
-                // Setup conversion
-                function setupDateTimeConversion(fieldKey) {
-                    const h12 = document.getElementById('dynamic_field_' + fieldKey + '_hour_12');
-                    const m12 = document.getElementById('dynamic_field_' + fieldKey + '_minute_12');
-                    const ampm = document.getElementById('dynamic_field_' + fieldKey + '_ampm');
-                    const display24 = document.getElementById('dynamic_field_' + fieldKey + '_display_24h');
+                const minute24 = document.createElement('input');
+                minute24.type = 'number';
+                minute24.id = 'dynamic_field_' + key + '_minute_24';
+                minute24.placeholder = 'MM';
+                minute24.min = '0';
+                minute24.max = '59';
+                minute24.style.cssText = 'width:60px; padding:10px; border:2px solid #e0ece8; border-radius:10px; font-size:14px; background:#fafdfc;';
+                
+                twentyFourDiv.appendChild(hour24);
+                twentyFourDiv.appendChild(colon2);
+                twentyFourDiv.appendChild(minute24);
+                
+                timeGroup.appendChild(twelveHourDiv);
+                timeGroup.appendChild(twentyFourDiv);
+                
+                wrapper.appendChild(dateInput);
+                wrapper.appendChild(formatDiv);
+                wrapper.appendChild(timeGroup);
+                
+                // Show/hide time inputs based on format selection
+                formatSelect.addEventListener('change', function() {
+                    const format = this.value;
+                    timeFormatPreferences[prefKey] = format;
                     
-                    if (!h12 || !m12 || !ampm || !display24) return;
-                    
-                    function convertTo24h() {
-                        let hour = parseInt(h12.value);
-                        const minute = parseInt(m12.value);
-                        const ampmVal = ampm.value;
-                        
-                        if (isNaN(hour) || isNaN(minute) || hour < 1 || hour > 12 || minute < 0 || minute > 59) {
-                            display24.textContent = '--:--';
-                            return;
-                        }
-                        
-                        let hour24 = hour;
-                        if (ampmVal === 'PM' && hour !== 12) {
-                            hour24 = hour + 12;
-                        } else if (ampmVal === 'AM' && hour === 12) {
-                            hour24 = 0;
-                        }
-                        
-                        display24.textContent = String(hour24).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+                    if (format === '12h') {
+                        twelveHourDiv.style.display = 'flex';
+                        twentyFourDiv.style.display = 'none';
+                    } else {
+                        twelveHourDiv.style.display = 'none';
+                        twentyFourDiv.style.display = 'flex';
                     }
-                    
-                    h12.addEventListener('input', convertTo24h);
-                    m12.addEventListener('input', convertTo24h);
-                    ampm.addEventListener('change', convertTo24h);
-                    
-                    // Set initial values if they exist
-                    if (value && typeof value === 'object') {
-                        if (value.time_12h) {
-                            const parts = value.time_12h.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/);
-                            if (parts) {
-                                h12.value = parseInt(parts[1]);
-                                m12.value = parseInt(parts[2]);
-                                ampm.value = parts[3];
-                                convertTo24h();
-                            }
-                        } else if (value.time_24h) {
-                            const parts = value.time_24h.match(/(\d{2}):(\d{2})/);
-                            if (parts) {
-                                let hour = parseInt(parts[1]);
-                                const minute = parseInt(parts[2]);
-                                let ampmVal = 'AM';
-                                let hour12Val = hour;
-                                if (hour >= 12) {
-                                    ampmVal = 'PM';
-                                    if (hour > 12) hour12Val = hour - 12;
-                                }
-                                if (hour === 0) {
-                                    hour12Val = 12;
-                                    ampmVal = 'AM';
-                                }
-                                h12.value = hour12Val;
-                                m12.value = minute;
-                                ampm.value = ampmVal;
-                                display24.textContent = value.time_24h;
-                            }
-                        }
-                    } else if (typeof value === 'string' && value.includes(':')) {
-                        const parts = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/);
-                        if (parts) {
-                            h12.value = parseInt(parts[1]);
-                            m12.value = parseInt(parts[2]);
-                            ampm.value = parts[3];
-                            convertTo24h();
+                });
+                
+                // Trigger initial visibility
+                if (formatSelect.value === '12h') {
+                    twelveHourDiv.style.display = 'flex';
+                    twentyFourDiv.style.display = 'none';
+                } else {
+                    twelveHourDiv.style.display = 'none';
+                    twentyFourDiv.style.display = 'flex';
+                }
+                
+                // Set initial values if they exist
+                if (value && typeof value === 'string') {
+                    const timeMatch = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/);
+                    if (timeMatch) {
+                        hour12.value = parseInt(timeMatch[1]);
+                        minute12.value = parseInt(timeMatch[2]);
+                        ampmSelect.value = timeMatch[3];
+                        formatSelect.value = '12h';
+                        twelveHourDiv.style.display = 'flex';
+                        twentyFourDiv.style.display = 'none';
+                    } else {
+                        const timeMatch24 = value.match(/(\d{1,2}):(\d{2})/);
+                        if (timeMatch24) {
+                            hour24.value = parseInt(timeMatch24[1]);
+                            minute24.value = parseInt(timeMatch24[2]);
+                            formatSelect.value = '24h';
+                            twelveHourDiv.style.display = 'none';
+                            twentyFourDiv.style.display = 'flex';
                         }
                     }
                 }
                 
-                setupDateTimeConversion(key);
+                inputElement = wrapper;
                 
             } else if (elementType === 'textarea') {
                 inputElement = document.createElement('textarea');
@@ -2957,6 +3744,9 @@
                 inputElement.style.fontFamily = 'inherit';
                 inputElement.style.resize = 'vertical';
             } else if (elementType === 'select') {
+                const wrapper = document.createElement('div');
+                wrapper.style.width = '100%';
+                
                 inputElement = document.createElement('select');
                 inputElement.id = 'dynamic_field_' + key;
                 inputElement.className = 'dynamic-field-input';
@@ -2975,43 +3765,181 @@
                 inputElement.appendChild(emptyOption);
                 
                 // Determine which options to use
-                let options = [];
+                let sourceValues = [];
                 
-                if (useAccountUrls && accountKeys.length > 0) {
-                    options = accountKeys;
-                } else if (useCountries && countries.length > 0) {
-                    options = countries;
+                if (sourceType !== 'none') {
+                    sourceValues = getSourceValues(sourceType, submitAs);
                 } else {
-                    options = defaultValues;
+                    defaultValues.forEach(val => {
+                        let submitData = '';
+                        if (submitAs === 'key') {
+                            submitData = val;
+                        } else if (submitAs === 'value') {
+                            submitData = val;
+                        } else if (submitAs === 'both') {
+                            submitData = JSON.stringify({ [val]: val });
+                        }
+                        
+                        sourceValues.push({ 
+                            key: val, 
+                            value: val,
+                            display: val,
+                            submitData: submitData,
+                            submitAs: submitAs
+                        });
+                    });
                 }
                 
-                options.forEach(val => {
+                sourceValues.forEach(({ key: optionKey, value: actualValue, display, submitData }) => {
                     const option = document.createElement('option');
-                    option.value = val;
-                    option.textContent = val;
-                    if (value === val) {
+                    option.value = submitData;
+                    option.textContent = display;
+                    option.dataset.key = optionKey;
+                    option.dataset.value = actualValue;
+                    option.dataset.submitAs = submitAs;
+                    if (value === actualValue || value === submitData) {
                         option.selected = true;
                     }
                     inputElement.appendChild(option);
                 });
+                
+                wrapper.appendChild(inputElement);
+                
+                // Add preview of what will be submitted
+                const previewDiv = document.createElement('div');
+                previewDiv.className = 'submit-as-preview';
+                previewDiv.style.cssText = 'margin-top:5px; padding:6px 12px; background:#f8fcf9; border-radius:6px; border:1px dashed #c8e0d8; font-size:12px; color:#5a7a8a; font-family:monospace; word-break:break-all; max-height:100px; overflow-y:auto;';
+                previewDiv.textContent = 'Selected: ' + (inputElement.value || 'None');
+                wrapper.appendChild(previewDiv);
+                
+                inputElement.addEventListener('change', function() {
+                    const selectedOption = this.options[this.selectedIndex];
+                    if (selectedOption && selectedOption.value) {
+                        previewDiv.textContent = 'Selected: ' + selectedOption.value;
+                    } else {
+                        previewDiv.textContent = 'Selected: None';
+                    }
+                });
+                
+                inputElement = wrapper;
+                
             } else {
-                // input
-                inputElement = document.createElement('input');
-                inputElement.type = 'text';
-                inputElement.id = 'dynamic_field_' + key;
-                inputElement.className = 'dynamic-field-input';
-                inputElement.placeholder = 'Enter ' + title + '...';
-                if (typeof value === 'string') {
-                    inputElement.value = value;
+                // input - could be list input or single input
+                if (allowList) {
+                    // List input with add/remove functionality
+                    const wrapper = document.createElement('div');
+                    wrapper.style.width = '100%';
+                    
+                    const listContainer = document.createElement('div');
+                    listContainer.id = 'dynamic_field_' + key + '_list';
+                    listContainer.className = 'list-values';
+                    
+                    // Load existing values
+                    let listValues = [];
+                    if (Array.isArray(value)) {
+                        listValues = value;
+                    } else if (typeof value === 'string' && value) {
+                        listValues = [value];
+                    } else if (value && typeof value === 'object') {
+                        listValues = Object.values(value);
+                    }
+                    
+                    // Input with add button
+                    const inputGroup = document.createElement('div');
+                    inputGroup.className = 'list-input-container';
+                    inputGroup.style.display = 'flex';
+                    inputGroup.style.gap = '10px';
+                    inputGroup.style.marginTop = '5px';
+                    inputGroup.style.flexWrap = 'wrap';
+                    
+                    const listInput = document.createElement('input');
+                    listInput.type = 'text';
+                    listInput.id = 'dynamic_field_' + key + '_input';
+                    listInput.placeholder = 'Add value...';
+                    listInput.style.flex = '1';
+                    listInput.style.minWidth = '150px';
+                    listInput.style.padding = '10px 14px';
+                    listInput.style.border = '2px solid #e0ece8';
+                    listInput.style.borderRadius = '10px';
+                    listInput.style.fontSize = '14px';
+                    listInput.style.background = '#fafdfc';
+                    
+                    const addBtn = document.createElement('button');
+                    addBtn.type = 'button';
+                    addBtn.className = 'btn btn-primary';
+                    addBtn.textContent = 'Add';
+                    addBtn.style.padding = '10px 20px';
+                    addBtn.style.margin = '0';
+                    addBtn.style.whiteSpace = 'nowrap';
+                    
+                    inputGroup.appendChild(listInput);
+                    inputGroup.appendChild(addBtn);
+                    
+                    wrapper.appendChild(listContainer);
+                    wrapper.appendChild(inputGroup);
+                    
+                    // Store reference for save
+                    wrapper._fieldKey = key;
+                    wrapper._listValues = listValues;
+                    
+                    // Function to render list values
+                    function renderListValues() {
+                        listContainer.innerHTML = '';
+                        if (listValues.length === 0) {
+                            listContainer.innerHTML = '<span style="color: #999; font-size: 13px;">No values added</span>';
+                            return;
+                        }
+                        listValues.forEach((val, idx) => {
+                            const tag = document.createElement('span');
+                            tag.className = 'value-tag';
+                            tag.innerHTML = val + ' <span class="remove-value" data-index="' + idx + '">×</span>';
+                            tag.querySelector('.remove-value').addEventListener('click', function() {
+                                listValues.splice(parseInt(this.dataset.index), 1);
+                                renderListValues();
+                            });
+                            listContainer.appendChild(tag);
+                        });
+                    }
+                    
+                    // Add value function
+                    addBtn.addEventListener('click', function() {
+                        const val = listInput.value.trim();
+                        if (val && !listValues.includes(val)) {
+                            listValues.push(val);
+                            renderListValues();
+                            listInput.value = '';
+                        }
+                    });
+                    
+                    listInput.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addBtn.click();
+                        }
+                    });
+                    
+                    renderListValues();
+                    inputElement = wrapper;
+                    
+                } else {
+                    // Single input
+                    inputElement = document.createElement('input');
+                    inputElement.type = 'text';
+                    inputElement.id = 'dynamic_field_' + key;
+                    inputElement.className = 'dynamic-field-input';
+                    inputElement.placeholder = 'Enter ' + title + '...';
+                    if (typeof value === 'string') {
+                        inputElement.value = value;
+                    }
+                    inputElement.style.width = '100%';
+                    inputElement.style.padding = '12px 16px';
+                    inputElement.style.border = '2px solid #e0ece8';
+                    inputElement.style.borderRadius = '10px';
+                    inputElement.style.fontSize = '14px';
+                    inputElement.style.transition = 'all 0.3s';
+                    inputElement.style.boxSizing = 'border-box';
+                    inputElement.style.background = '#fafdfc';
                 }
-                inputElement.style.width = '100%';
-                inputElement.style.padding = '12px 16px';
-                inputElement.style.border = '2px solid #e0ece8';
-                inputElement.style.borderRadius = '10px';
-                inputElement.style.fontSize = '14px';
-                inputElement.style.transition = 'all 0.3s';
-                inputElement.style.boxSizing = 'border-box';
-                inputElement.style.background = '#fafdfc';
             }
             
             div.appendChild(inputElement);
@@ -3086,7 +4014,6 @@
             if (!configData.countries.includes(value)) {
                 configData.countries.push(value);
                 loadCountries();
-                // Re-render dynamic fields to update country options
                 renderDynamicFields();
                 input.value = '';
             }
@@ -3098,7 +4025,6 @@
             if (configData.countries) {
                 configData.countries.splice(index, 1);
                 loadCountries();
-                // Re-render dynamic fields to update country options
                 renderDynamicFields();
             }
         });
@@ -3136,7 +4062,6 @@
         configData.accounts[name] = { schedule: [url] };
         loadAccounts();
         loadCaptionAuthors();
-        // Re-render dynamic fields to update account URL options
         renderDynamicFields();
         hideAddAccount();
         showModal('Success', 'Account added successfully!');
@@ -3148,7 +4073,6 @@
                 delete configData.accounts[name];
                 loadAccounts();
                 loadCaptionAuthors();
-                // Re-render dynamic fields to update account URL options
                 renderDynamicFields();
             }
         });
@@ -3203,6 +4127,7 @@
         configData.captions[authorIndex].captions.push(newCaption);
         
         loadCaptions();
+        renderDynamicFields();
         hideAddCaption();
         showModal('Success', 'Caption added successfully!');
     }
@@ -3252,6 +4177,7 @@
         }
         
         loadCaptions();
+        renderDynamicFields();
         closeModal();
         showModal('Success', 'Captions updated successfully!');
     }
@@ -3261,6 +4187,7 @@
             if (configData.captions && configData.captions[index]) {
                 configData.captions[index].captions = [];
                 loadCaptions();
+                renderDynamicFields();
                 closeModal();
                 showModal('Success', 'All captions deleted for this author.');
             }
@@ -3272,6 +4199,7 @@
             if (configData.captions) {
                 configData.captions.splice(index, 1);
                 loadCaptions();
+                renderDynamicFields();
             }
         });
     }
@@ -3290,6 +4218,12 @@
                 <input type="text" id="new_timeorder_name" placeholder="Enter time order name..." style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px;">
             </div>
             <div class="time-input-group">
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%; margin-top:10px;">
+                    <span style="font-weight:500;">24h:</span>
+                    <input type="number" id="new_time_hour_24" placeholder="HH" min="0" max="23" style="width:80px; padding:10px;">
+                    <span>:</span>
+                    <input type="number" id="new_time_minute_24" placeholder="MM" min="0" max="59" style="width:80px; padding:10px;">
+                </div>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%;">
                     <span style="font-weight:500;">12h:</span>
                     <input type="number" id="new_time_hour_12" placeholder="HH" min="1" max="12" style="width:80px; padding:10px;">
@@ -3299,12 +4233,6 @@
                         <option value="AM">AM</option>
                         <option value="PM">PM</option>
                     </select>
-                </div>
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%; margin-top:10px;">
-                    <span style="font-weight:500;">24h:</span>
-                    <input type="number" id="new_time_hour_24" placeholder="HH" min="0" max="23" style="width:80px; padding:10px;">
-                    <span>:</span>
-                    <input type="number" id="new_time_minute_24" placeholder="MM" min="0" max="59" style="width:80px; padding:10px;">
                 </div>
                 <div style="margin-top:10px;">
                     <button class="btn btn-primary" onclick="addTimeToNewOrder()">Add to List</button>
@@ -3472,6 +4400,7 @@
         
         configData.timeorders[name] = _newTimeList;
         loadTimeOrders();
+        renderDynamicFields();
         cancelNewTimeOrder();
         showModal('Success', 'Time order saved successfully!');
     }
@@ -3510,6 +4439,7 @@
         if (configData.timeorders && configData.timeorders[key]) {
             configData.timeorders[key].push({ '12hours': time12h, '24hours': time24h });
             loadTimeOrders();
+            renderDynamicFields();
             showModal('Success', 'Time added successfully!');
         }
     }
@@ -3519,6 +4449,7 @@
             if (configData.timeorders) {
                 delete configData.timeorders[name];
                 loadTimeOrders();
+                renderDynamicFields();
             }
         });
     }
@@ -3532,38 +4463,83 @@
         for (const key of fieldKeys) {
             const field = configData.dynamic_fields[key];
             const elementType = field.element_type || 'input';
+            const allowList = field.allow_list || false;
             
             if (elementType === 'date-time-input') {
                 const dateInput = document.getElementById('dynamic_field_' + key + '_date');
-                const display24h = document.getElementById('dynamic_field_' + key + '_display_24h');
+                const formatSelect = document.getElementById('dynamic_field_' + key + '_format');
                 
-                if (dateInput && display24h) {
+                if (dateInput && formatSelect) {
                     const date = dateInput.value;
-                    const time24h = display24h.textContent;
+                    const format = formatSelect.value;
                     
-                    const hour12 = document.getElementById('dynamic_field_' + key + '_hour_12');
-                    const minute12 = document.getElementById('dynamic_field_' + key + '_minute_12');
-                    const ampm = document.getElementById('dynamic_field_' + key + '_ampm');
-                    
-                    let time12h = '';
-                    if (hour12 && minute12 && ampm) {
-                        const h = hour12.value;
-                        const m = minute12.value;
-                        const a = ampm.value;
-                        if (h && m) {
-                            time12h = h + ':' + String(m).padStart(2, '0') + ' ' + a;
+                    let timeStr = '';
+                    if (format === '12h') {
+                        const hour12 = document.getElementById('dynamic_field_' + key + '_hour_12');
+                        const minute12 = document.getElementById('dynamic_field_' + key + '_minute_12');
+                        const ampm = document.getElementById('dynamic_field_' + key + '_ampm');
+                        if (hour12 && minute12 && ampm) {
+                            const h = hour12.value;
+                            const m = minute12.value;
+                            const a = ampm.value;
+                            if (h && m) {
+                                timeStr = h + ':' + String(m).padStart(2, '0') + ' ' + a;
+                            }
+                        }
+                    } else {
+                        const hour24 = document.getElementById('dynamic_field_' + key + '_hour_24');
+                        const minute24 = document.getElementById('dynamic_field_' + key + '_minute_24');
+                        if (hour24 && minute24) {
+                            const h = hour24.value;
+                            const m = minute24.value;
+                            if (h && m) {
+                                timeStr = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+                            }
                         }
                     }
                     
-                    if (date || (time24h && time24h !== '--:--')) {
-                        dynamicValues[key] = {
-                            date: date || '',
-                            time_12h: time12h,
-                            time_24h: (time24h && time24h !== '--:--') ? time24h : ''
-                        };
+                    if (date || timeStr) {
+                        // Format date as dd/mm/yyyy
+                        let formattedDate = '';
+                        if (date) {
+                            const parts = date.split('-');
+                            if (parts.length === 3) {
+                                formattedDate = parts[2] + '/' + parts[1] + '/' + parts[0];
+                            }
+                        }
+                        dynamicValues[key] = formattedDate + (timeStr ? ' ' + timeStr : '');
+                    }
+                }
+            } else if (elementType === 'input' && allowList) {
+                // List input - get all values from the list
+                const listContainer = document.getElementById('dynamic_field_' + key + '_list');
+                if (listContainer) {
+                    const values = [];
+                    const tags = listContainer.querySelectorAll('.value-tag');
+                    tags.forEach(tag => {
+                        const text = tag.textContent.replace('×', '').trim();
+                        if (text) values.push(text);
+                    });
+                    dynamicValues[key] = values.join(', ');
+                }
+            } else if (elementType === 'select') {
+                // For select, get the select element directly by ID
+                const select = document.getElementById('dynamic_field_' + key);
+                if (select) {
+                    // The value is already the submit data from the option
+                    dynamicValues[key] = select.value;
+                } else {
+                    // Try to find select inside wrapper
+                    const wrapper = document.getElementById('dynamic_field_' + key);
+                    if (wrapper && wrapper.querySelector) {
+                        const selectEl = wrapper.querySelector('select');
+                        if (selectEl) {
+                            dynamicValues[key] = selectEl.value;
+                        }
                     }
                 }
             } else {
+                // For text inputs, textareas, etc.
                 const input = document.getElementById('dynamic_field_' + key);
                 if (input) {
                     dynamicValues[key] = input.value;
@@ -3571,14 +4547,16 @@
             }
         }
         
-        // Create author from first dynamic field or use a default
-        const author = dynamicValues.author || 'default';
+        // Use the first dynamic field value as author, or default
+        const firstKey = Object.keys(dynamicValues)[0] || 'default';
+        const author = dynamicValues[firstKey] || 'default';
         
         // Build settings object with dynamic values
         const settingsObj = {
             author: author,
             dynamic_values: dynamicValues,
-            status: 'pending'
+            status: 'pending',
+            operation_status: ''
         };
         
         // Check if author already exists
@@ -3590,6 +4568,7 @@
                 for (let i = 0; i < existingSettings.length; i++) {
                     if (existingSettings[i] && existingSettings[i].author === editingAuthor) {
                         settingsObj.status = existingSettings[i].status || 'pending';
+                        settingsObj.operation_status = existingSettings[i].operation_status || '';
                         existingSettings[i] = settingsObj;
                         found = true;
                         break;
@@ -3609,15 +4588,6 @@
                 if (!found) {
                     existingSettings.push(settingsObj);
                 }
-            }
-        } else if (typeof existingSettings === 'object' && existingSettings.author) {
-            if (existingSettings.author === author || (isEditMode && editingAuthor === existingSettings.author)) {
-                if (isEditMode) {
-                    settingsObj.status = existingSettings.status || 'pending';
-                }
-                existingSettings = settingsObj;
-            } else {
-                existingSettings = [existingSettings, settingsObj];
             }
         } else {
             existingSettings = [settingsObj];
