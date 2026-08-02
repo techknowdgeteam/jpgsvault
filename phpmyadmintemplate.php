@@ -66,28 +66,23 @@
             color: #333;
             tab-size: 4;
         }
-        /* Focus state for textarea */
         textarea:focus {
             outline: none;
             border-color: #28a745;
             box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.2);
         }
-        /* Green border when Tab is active */
         textarea.tab-active {
             border-color: #28a745;
             border-width: 3px;
             box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.3);
             background-color: #f0fff0;
         }
-        
-        /* Syntax highlighting for comments in textarea */
         textarea.comment-highlight {
             background-color: #f8f9fa;
             background-image: 
                 linear-gradient(#f8f9fa 1.6em, #e9ecef 1.6em);
             background-size: 100% 3.2em;
         }
-        
         button {
             background-color: #007bff;
             color: white;
@@ -236,6 +231,32 @@
             fill: currentColor;
         }
 
+        .reset-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #dc3545;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            font-weight: bold;
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out;
+            display: none;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
             .result-header { flex-direction: column; gap: 10px; align-items: stretch; }
@@ -246,6 +267,8 @@
     <h1>Database Query Interface</h1>
     
     <div id="message"></div>
+    <div class="reset-notification" id="resetNotification">🔄 Reset Complete</div>
+    
     <div class="container">
         <div class="sidebar">
             <div>
@@ -263,7 +286,7 @@
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <span class="comment-indicator" id="comment-indicator">No comments detected</span>
                     <span class="keyboard-hint">
-                        <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Ctrl+C</strong> to copy results
+                        <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Ctrl+X</strong> to copy via button | <strong>Ctrl+M</strong> to copy directly | <strong>Ctrl+R+Delete</strong> to reset
                     </span>
                 </div>
             </div>
@@ -282,6 +305,88 @@
         let isTabPressed = false;
         let tabTimeout = null;
         let lastQueryResult = null;
+        let isPageReady = false;
+        let isQueryExecuting = false;
+        let isCtrlAPressed = false;
+
+        // Silent clipboard function - no alerts, no prompts (for non-copy operations)
+        function copyToClipboardSilent(message) {
+            try {
+                // Try modern clipboard API first
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(message).catch(() => {
+                        // Silently fallback
+                        fallbackCopySilent(message);
+                    });
+                } else {
+                    // Fallback method
+                    fallbackCopySilent(message);
+                }
+            } catch (e) {
+                // Silently fail - no alerts
+                console.log('Clipboard update:', message);
+            }
+        }
+
+        function fallbackCopySilent(message) {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = message;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '-9999px';
+                textarea.style.height = '1px';
+                textarea.style.width = '1px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            } catch (e) {
+                // Silently fail
+                console.log('Clipboard update (fallback):', message);
+            }
+        }
+
+        // PURE DATA COPY FUNCTION - only copies data, no metadata
+        function copyPureDataToClipboard(data) {
+            if (!data) {
+                return false;
+            }
+            
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(data).catch(() => {
+                        fallbackCopyPureData(data);
+                    });
+                } else {
+                    fallbackCopyPureData(data);
+                }
+                return true;
+            } catch (e) {
+                console.log('Pure data copy failed:', e);
+                return false;
+            }
+        }
+
+        function fallbackCopyPureData(data) {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = data;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '-9999px';
+                textarea.style.height = '1px';
+                textarea.style.width = '1px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            } catch (e) {
+                console.log('Pure data fallback copy failed:', e);
+            }
+        }
 
         function showMessage(text, type = 'info') {
             const messageDiv = document.getElementById('message');
@@ -289,12 +394,69 @@
             messageDiv.className = type;
             messageDiv.style.display = 'block';
             
-            // Auto-hide info messages after 3 seconds
             if (type === 'info') {
                 setTimeout(() => {
                     messageDiv.style.display = 'none';
                 }, 3000);
             }
+        }
+
+        // RESET FUNCTION - Clears everything
+        function resetEverything() {
+            // Clear textarea
+            const textarea = document.getElementById('sql-query');
+            textarea.value = '';
+            textarea.classList.remove('tab-active');
+            textarea.style.borderColor = '';
+            textarea.style.boxShadow = '';
+            textarea.style.backgroundColor = '';
+            
+            // Clear query result
+            const resultDiv = document.getElementById('query-result');
+            resultDiv.innerHTML = '';
+            
+            // Clear column data
+            const columnDataDiv = document.getElementById('column-data');
+            columnDataDiv.innerHTML = '';
+            
+            // Clear last query result
+            lastQueryResult = null;
+            
+            // Clear comment indicator
+            updateCommentIndicator('');
+            
+            // Clear message
+            const messageDiv = document.getElementById('message');
+            messageDiv.style.display = 'none';
+            messageDiv.className = '';
+            messageDiv.textContent = '';
+            
+            // Clear clipboard (silently)
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText('').catch(() => {});
+                }
+            } catch (e) {}
+            
+            // Reset any active states
+            isQueryExecuting = false;
+            isCtrlAPressed = false;
+            
+            // Show reset notification
+            showResetNotification();
+            
+            // Log reset action
+            console.log('Page reset to initial state');
+        }
+
+        function showResetNotification() {
+            const notification = document.getElementById('resetNotification');
+            notification.style.display = 'block';
+            
+            // Hide after 2 seconds
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 2000);
         }
 
         function loadTables() {
@@ -359,13 +521,6 @@
                 });
         }
 
-        /**
-         * Parse SQL query to remove comments and identify comment sections
-         * Supports:
-         * - Single line comments: -- comment
-         * - Single line comments: # comment
-         * - Multi-line comments: /* comment *\/
-         */
         function parseSqlQuery(sqlText) {
             if (!sqlText || sqlText.trim() === '') {
                 return { cleanQuery: '', comments: [], hasComments: false };
@@ -378,33 +533,22 @@
             let inSingleQuote = false;
             let inDoubleQuote = false;
             let inBacktick = false;
-            let currentComment = '';
-            let commentStartLine = 1;
             let lineNumber = 1;
-            
-            // Track line numbers for each character
-            const lines = sqlText.split('\n');
-            let currentPosition = 0;
 
             while (i < sqlText.length) {
                 const char = sqlText[i];
                 const nextChar = sqlText[i + 1] || '';
-                const prevChar = sqlText[i - 1] || '';
                 
-                // Update line number
                 if (char === '\n') {
                     lineNumber++;
                 }
 
-                // Check for single-line comment: -- or #
                 if (!inMultiLineComment && !inSingleQuote && !inDoubleQuote && !inBacktick) {
                     if ((char === '-' && nextChar === '-') || char === '#') {
-                        // Start of single-line comment
                         let commentStart = i;
                         let commentEnd = sqlText.indexOf('\n', i);
                         if (commentEnd === -1) commentEnd = sqlText.length;
                         
-                        // Extract the comment
                         let commentText = sqlText.substring(commentStart, commentEnd).trim();
                         comments.push({
                             type: 'single-line',
@@ -414,23 +558,20 @@
                             end: commentEnd
                         });
                         
-                        // Skip to end of line
                         i = commentEnd;
                         continue;
                     }
                 }
 
-                // Check for multi-line comment start: /*
                 if (!inMultiLineComment && !inSingleQuote && !inDoubleQuote && !inBacktick) {
                     if (char === '/' && nextChar === '*') {
                         inMultiLineComment = true;
                         let commentStart = i;
-                        // Find the end of the comment
                         let commentEnd = sqlText.indexOf('*/', i + 2);
                         if (commentEnd === -1) {
                             commentEnd = sqlText.length;
                         } else {
-                            commentEnd += 2; // Include the */
+                            commentEnd += 2;
                         }
                         
                         let commentText = sqlText.substring(commentStart, commentEnd).trim();
@@ -448,7 +589,6 @@
                     }
                 }
 
-                // Handle string delimiters - we need to ignore comments inside strings
                 if (!inMultiLineComment) {
                     if (char === "'" && !inDoubleQuote && !inBacktick) {
                         inSingleQuote = !inSingleQuote;
@@ -459,7 +599,6 @@
                     }
                 }
 
-                // If we're not in a multi-line comment, add character to clean query
                 if (!inMultiLineComment) {
                     cleanQuery += char;
                 }
@@ -467,10 +606,7 @@
                 i++;
             }
 
-            // Clean up the query: remove trailing whitespace and ensure proper formatting
             cleanQuery = cleanQuery.trim();
-            
-            // Remove empty lines
             cleanQuery = cleanQuery.split('\n')
                 .filter(line => line.trim() !== '')
                 .join('\n');
@@ -495,36 +631,36 @@
             }
         }
 
-        /**
-         * Format data for copying
-         */
-        function formatDataForCopy(data, columnMeta) {
+        // Detect if query is a data modification query (INSERT, UPDATE, DELETE, etc.)
+        function isDataModificationQuery(sqlQuery) {
+            if (!sqlQuery) return false;
+            const trimmed = sqlQuery.trim().toUpperCase();
+            // Check for INSERT, UPDATE, DELETE, REPLACE, TRUNCATE, DROP, ALTER, CREATE
+            const modificationKeywords = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'TRUNCATE', 'DROP', 'ALTER', 'CREATE'];
+            return modificationKeywords.some(keyword => trimmed.startsWith(keyword));
+        }
+
+        // FORMAT DATA WITHOUT COLUMN HEADERS - PURE VALUES ONLY
+        function formatDataForCopyPure(data, columnMeta) {
             if (!data || data.length === 0) {
-                return 'No results to copy';
+                return '';
             }
 
             let result = [];
-            
-            // Add header
             const headers = columnMeta.map(col => col.name);
-            result.push(headers.join('\t'));
             
-            // Add rows
             data.forEach(row => {
                 const rowValues = headers.map(header => {
                     let value = row[header];
                     
-                    // Handle special values
                     if (value === null || value === undefined) {
                         return 'NULL';
                     }
                     
-                    // If value is an object or array, convert to JSON
                     if (typeof value === 'object') {
                         return JSON.stringify(value, null, 2);
                     }
                     
-                    // If it's a string that looks like JSON, parse and format it
                     if (typeof value === 'string') {
                         const trimmed = value.trim();
                         if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
@@ -533,11 +669,9 @@
                                 const parsed = JSON.parse(trimmed);
                                 return JSON.stringify(parsed, null, 2);
                             } catch (e) {
-                                // Not valid JSON, return as is
                                 return value;
                             }
                         }
-                        // Check if it's a comma-separated list
                         if (trimmed.includes(',') && !trimmed.includes(' ')) {
                             const items = trimmed.split(',').map(item => item.trim());
                             return JSON.stringify(items, null, 2);
@@ -553,102 +687,160 @@
             return result.join('\n');
         }
 
-        /**
-         * Copy query results to clipboard
-         */
-        function copyQueryResults() {
+        // FORMAT DATA WITH COLUMN HEADERS (for display purposes only)
+        function formatDataForCopyWithHeaders(data, columnMeta) {
+            if (!data || data.length === 0) {
+                return '';
+            }
+
+            let result = [];
+            const headers = columnMeta.map(col => col.name);
+            result.push(headers.join('\t'));
+            
+            data.forEach(row => {
+                const rowValues = headers.map(header => {
+                    let value = row[header];
+                    
+                    if (value === null || value === undefined) {
+                        return 'NULL';
+                    }
+                    
+                    if (typeof value === 'object') {
+                        return JSON.stringify(value, null, 2);
+                    }
+                    
+                    if (typeof value === 'string') {
+                        const trimmed = value.trim();
+                        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+                            (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                            try {
+                                const parsed = JSON.parse(trimmed);
+                                return JSON.stringify(parsed, null, 2);
+                            } catch (e) {
+                                return value;
+                            }
+                        }
+                        if (trimmed.includes(',') && !trimmed.includes(' ')) {
+                            const items = trimmed.split(',').map(item => item.trim());
+                            return JSON.stringify(items, null, 2);
+                        }
+                        return value;
+                    }
+                    
+                    return String(value);
+                });
+                result.push(rowValues.join('\t'));
+            });
+            
+            return result.join('\n');
+        }
+
+        // PURE COPY - only data values, NO column headers
+        function copyQueryResultsPure() {
             if (!lastQueryResult) {
-                showMessage('No results available to copy. Please execute a query first.', 'info');
                 return;
             }
 
             const { data, columnMeta } = lastQueryResult;
             
             if (!data || data.length === 0) {
-                showMessage('No data to copy.', 'info');
                 return;
             }
 
-            // Format data for copying
-            const formattedData = formatDataForCopy(data, columnMeta);
+            // Use PURE format - NO headers
+            const formattedData = formatDataForCopyPure(data, columnMeta);
             
-            // Use modern clipboard API
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(formattedData)
-                    .then(() => {
-                        showMessage(`✅ Copied ${data.length} row(s) to clipboard (${formattedData.split('\n').length} lines)`, 'success');
-                        // Update button style
-                        const copyBtn = document.getElementById('copy-results-btn');
-                        if (copyBtn) {
-                            copyBtn.textContent = '✓ Copied!';
-                            copyBtn.classList.add('copied');
-                            setTimeout(() => {
-                                copyBtn.textContent = '📋 Copy Results';
-                                copyBtn.classList.remove('copied');
-                            }, 2000);
-                        }
-                    })
-                    .catch(err => {
-                        // Fallback method
-                        fallbackCopy(formattedData);
-                    });
-            } else {
-                // Fallback for older browsers
-                fallbackCopy(formattedData);
+            if (formattedData) {
+                copyPureDataToClipboard(formattedData);
+                
+                // Update button visual feedback
+                const copyBtn = document.getElementById('copy-results-btn');
+                if (copyBtn) {
+                    copyBtn.textContent = '✓ Copied!';
+                    copyBtn.classList.add('copied');
+                    setTimeout(() => {
+                        copyBtn.textContent = '📋 Copy Results';
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
+                }
             }
         }
 
-        /**
-         * Fallback copy method using textarea
-         */
-        function fallbackCopy(text) {
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            textarea.style.left = '-9999px';
-            document.body.appendChild(textarea);
-            
-            textarea.select();
-            try {
-                const successful = document.execCommand('copy');
-                if (successful) {
-                    showMessage(`✅ Copied successfully using fallback method`, 'success');
-                } else {
-                    showMessage('Failed to copy. Please copy manually.', 'error');
-                }
-            } catch (err) {
-                showMessage('Copy failed: ' + err.message, 'error');
+        // Function for copy button - copies WITH headers for clarity (but we'll make it pure too for consistency)
+        function copyQueryResults() {
+            copyQueryResultsPure();
+        }
+
+        function copyQueryResultDirectly() {
+            // Copy the result directly from the query result div - PURE DATA ONLY (NO HEADERS)
+            const resultDiv = document.getElementById('query-result');
+            if (!resultDiv) {
+                return;
             }
-            
-            document.body.removeChild(textarea);
+
+            // Try to get the result from the lastQueryResult first
+            if (lastQueryResult && lastQueryResult.data && lastQueryResult.data.length > 0) {
+                // Use PURE format - NO headers
+                const formattedData = formatDataForCopyPure(lastQueryResult.data, lastQueryResult.columnMeta);
+                if (formattedData && formattedData !== 'No results to copy') {
+                    copyPureDataToClipboard(formattedData);
+                    return;
+                }
+            }
+
+            // Fallback: try to get from the table in the result div (skip the header row)
+            const table = resultDiv.querySelector('table');
+            if (table) {
+                // Extract text from table - SKIP THE HEADER ROW (first row)
+                let resultText = '';
+                const rows = table.querySelectorAll('tr');
+                let isFirstRow = true;
+                rows.forEach(row => {
+                    // Skip the header row (first row with th elements)
+                    if (isFirstRow) {
+                        isFirstRow = false;
+                        return;
+                    }
+                    const cells = row.querySelectorAll('td');
+                    const rowText = Array.from(cells).map(cell => cell.textContent.trim()).join('\t');
+                    if (rowText) {
+                        resultText += rowText + '\n';
+                    }
+                });
+                
+                if (resultText) {
+                    copyPureDataToClipboard(resultText.trim());
+                    return;
+                }
+            }
         }
 
         function executeQuery() {
+            if (isQueryExecuting) {
+                return; // Prevent multiple simultaneous executions
+            }
+
             const fullSqlText = document.getElementById('sql-query').value;
             const resultDiv = document.getElementById('query-result');
-            const columnDataDiv = document.getElementById('column-data');
 
             if (!fullSqlText.trim()) {
-                showMessage('Please enter an SQL query.', 'info');
+                copyToClipboardSilent('invalid response');
                 return;
             }
 
-            // Parse the query to separate comments from actual SQL
             const parsed = parseSqlQuery(fullSqlText);
             const cleanQuery = parsed.cleanQuery;
 
             if (!cleanQuery) {
-                showMessage('No valid SQL query found. Please enter a SQL query.', 'error');
+                copyToClipboardSilent('invalid response');
                 return;
             }
 
-            // Log what we're executing
-            console.log('Full text with comments:', fullSqlText);
-            console.log('Clean SQL query:', cleanQuery);
-            console.log('Comments found:', parsed.comments);
+            // Check if it's a data modification query
+            const isModification = isDataModificationQuery(cleanQuery);
 
-            // Show comment information
+            isQueryExecuting = true;
+
             if (parsed.hasComments) {
                 let commentInfo = `Executing query with ${parsed.comments.length} comment(s) removed:\n`;
                 parsed.comments.forEach((comment, index) => {
@@ -657,14 +849,15 @@
                 showMessage(commentInfo, 'info');
             }
 
-            // Visual feedback for execution
             const executeBtn = document.getElementById('execute-btn');
             executeBtn.style.backgroundColor = '#28a745';
             setTimeout(() => {
                 executeBtn.style.backgroundColor = '#007bff';
             }, 300);
 
-            // Execute the clean query (without comments)
+            // Silent clipboard update for enter activation
+            copyToClipboardSilent('enter button activated');
+
             fetch('phpmyadmin_tablesfetch.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -672,24 +865,58 @@
             })
             .then(response => response.json())
             .then(data => {
+                // Handle data modification queries (INSERT, UPDATE, DELETE, etc.)
+                if (isModification) {
+                    if (data.status === 'success') {
+                        // Copy success message to clipboard
+                        let successMessage = 'Data updated successfully';
+                        if (data.data && data.data.affectedRows !== undefined) {
+                            successMessage = `${data.data.affectedRows} row(s) affected successfully`;
+                        }
+                        copyPureDataToClipboard(successMessage);
+                        showMessage('✅ ' + successMessage, 'success');
+                    } else {
+                        // Copy error message to clipboard
+                        const errorMessage = 'Error: ' + (data.message || 'Operation failed');
+                        copyPureDataToClipboard(errorMessage);
+                        showMessage(errorMessage, 'error');
+                    }
+                    
+                    // Clear result display for modification queries (keep it clean)
+                    resultDiv.innerHTML = '';
+                    if (data.status === 'success') {
+                        const affectedRows = data.data && data.data.affectedRows !== undefined ? data.data.affectedRows : 0;
+                        resultDiv.innerHTML = `
+                            <div class="result-header">
+                                <span class="result-info">✅ ${affectedRows} row(s) affected</span>
+                            </div>
+                            <p style="padding: 15px; color: #155724; background-color: #d4edda; border-radius: 4px;">
+                                Query executed successfully. ${affectedRows} row(s) affected.
+                            </p>
+                        `;
+                    }
+                    
+                    isQueryExecuting = false;
+                    return;
+                }
+
+                // Handle SELECT and other fetching queries (existing behavior)
                 if (data.status === 'success') {
                     showMessage(data.message, 'success');
                 } else {
                     showMessage(data.message, 'error');
+                    copyToClipboardSilent('invalid response');
                 }
                 
                 resultDiv.innerHTML = '';
-                columnDataDiv.innerHTML = '';
 
                 if (data.status === 'success' && data.data) {
                     if (data.data.rows && data.data.rows.length > 0) {
-                        // Store result for copy functionality
                         lastQueryResult = {
                             data: data.data.rows,
                             columnMeta: data.data.columnMeta
                         };
 
-                        // Build result header with copy button
                         let resultHeader = `
                             <div class="result-header">
                                 <span class="result-info">📊 ${data.data.rows.length} row(s) returned</span>
@@ -699,7 +926,6 @@
                             </div>
                         `;
 
-                        // Build table
                         let tableHtml = resultHeader;
                         tableHtml += '<table><thead><tr>';
                         data.data.columnMeta.forEach(col => {
@@ -714,7 +940,6 @@
                                     ? JSON.stringify(value, null, 2) 
                                     : (value !== null ? String(value) : 'NULL');
                                 
-                                // Check if it's a JSON string
                                 if (typeof value === 'string') {
                                     const trimmed = value.trim();
                                     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
@@ -722,9 +947,7 @@
                                         try {
                                             const parsedJson = JSON.parse(trimmed);
                                             displayValue = JSON.stringify(parsedJson, null, 2);
-                                        } catch (e) {
-                                            // Not valid JSON, use as is
-                                        }
+                                        } catch (e) {}
                                     }
                                 }
                                 
@@ -736,7 +959,6 @@
                         resultDiv.innerHTML = tableHtml;
 
                     } else if (data.data.affectedRows !== undefined) {
-                        // For non-SELECT queries
                         resultDiv.innerHTML = `
                             <div class="result-header">
                                 <span class="result-info">✅ Affected rows: ${data.data.affectedRows}</span>
@@ -753,78 +975,120 @@
                         `;
                         lastQueryResult = null;
                     }
+                } else {
+                    copyToClipboardSilent('invalid response');
                 }
+                isQueryExecuting = false;
             })
             .catch(error => {
                 showMessage('Error: ' + error.message, 'error');
                 lastQueryResult = null;
+                copyToClipboardSilent('invalid response');
+                isQueryExecuting = false;
             });
         }
 
-        // Function to handle keyboard shortcuts
         function handleKeyboardShortcut(event) {
             const textarea = document.getElementById('sql-query');
 
-            // Track Tab key state
+            // Handle Ctrl+A to detect selection
+            if (event.type === 'keydown' && event.ctrlKey && (event.key === 'r' || event.key === 'R')) {
+                isCtrlAPressed = true;
+                return;
+            }
+
+            // Handle Delete/Backspace when Ctrl+A is active
+            if (event.type === 'keydown' && isCtrlAPressed && (event.key === 'Delete' || event.key === 'Del' || event.key === 'Backspace')) {
+                // Check if textarea is focused or has content
+                if (document.activeElement === textarea || textarea.value.length > 0) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    
+                    // Reset everything
+                    resetEverything();
+                    
+                    // Reset Ctrl+A state
+                    isCtrlAPressed = false;
+                    return;
+                }
+            }
+
+            // Reset Ctrl+A state if other keys are pressed
+            if (event.type === 'keydown' && !(event.ctrlKey && (event.key === 'a' || event.key === 'A'))) {
+                // Only reset if not part of Ctrl+A
+                if (!event.ctrlKey || (event.key !== 'a' && event.key !== 'A' && event.key !== 'Delete' && event.key !== 'Del' && event.key !== 'Backspace')) {
+                    isCtrlAPressed = false;
+                }
+            }
+
+            // Handle Tab key for focusing textarea
             if (event.key === 'Tab') {
                 isTabPressed = event.type === 'keydown';
                 if (event.type === 'keydown') {
-                    event.preventDefault(); // Prevent default tab behavior
+                    event.preventDefault();
                     
-                    // Focus the textarea
                     textarea.focus();
                     textarea.classList.add('tab-active');
+                    copyToClipboardSilent('text area is on focus');
                     
-                    // Clear any existing timeout
                     if (tabTimeout) {
                         clearTimeout(tabTimeout);
                     }
                 }
             }
 
-            // Check if Ctrl+C is pressed - copy results
-            if (event.type === 'keydown' && event.ctrlKey && event.key === 'c') {
-                // Only copy if we're not in the textarea (to allow normal copy)
-                if (document.activeElement !== textarea) {
-                    event.preventDefault();
-                    copyQueryResults();
-                }
+            // Handle Ctrl+X for copying results via button click - PURE DATA ONLY
+            if (event.type === 'keydown' && event.ctrlKey && (event.key === 'x' || event.key === 'X')) {
+                event.preventDefault(); // Prevent cut operation
+                // Use pure copy function directly
+                copyQueryResultsPure();
+                return;
             }
 
-            // Check if Enter key is pressed - execute query
-            if (event.type === 'keydown' && event.key === 'Enter') {
-                // Don't prevent default for Enter in textarea (allow newlines)
-                // But if Enter is pressed anywhere, execute the query
-                executeQuery();
-                
-                // Visual feedback on the execute button
-                const executeBtn = document.getElementById('execute-btn');
-                executeBtn.style.backgroundColor = '#28a745';
-                setTimeout(() => {
-                    executeBtn.style.backgroundColor = '#007bff';
-                }, 300);
+            // Handle Ctrl+M for direct copy of query result - PURE DATA ONLY
+            if (event.type === 'keydown' && event.ctrlKey && (event.key === 'm' || event.key === 'M')) {
+                event.preventDefault();
+                copyQueryResultDirectly();
+                return;
+            }
+
+            // Handle Enter key for executing query
+            if (event.type === 'keydown' && event.key === 'Enter' && !event.shiftKey) {
+                if (document.activeElement === textarea && !event.shiftKey) {
+                    event.preventDefault(); // Prevent newline in textarea
+                    executeQuery();
+                    
+                    const executeBtn = document.getElementById('execute-btn');
+                    executeBtn.style.backgroundColor = '#28a745';
+                    setTimeout(() => {
+                        executeBtn.style.backgroundColor = '#007bff';
+                    }, 300);
+                }
             }
         }
 
-        // Function to handle key releases
         function handleKeyUp(event) {
             const textarea = document.getElementById('sql-query');
             
-            // Update comment indicator on any key release in textarea
             if (event.target === textarea) {
                 updateCommentIndicator(textarea.value);
             }
             
-            // Track Tab key state
+            // Reset Ctrl+A state on keyup
+            if (event.key === 'Control' || event.key === 'a' || event.key === 'A') {
+                // Don't reset immediately, allow Delete to be detected
+                setTimeout(() => {
+                    isCtrlAPressed = false;
+                }, 100);
+            }
+            
             if (event.key === 'Tab') {
                 isTabPressed = false;
                 
-                // Clear any existing timeout
                 if (tabTimeout) {
                     clearTimeout(tabTimeout);
                 }
                 
-                // Remove the active state after a delay
                 tabTimeout = setTimeout(() => {
                     textarea.classList.remove('tab-active');
                     textarea.style.borderColor = '';
@@ -834,21 +1098,17 @@
             }
         }
 
-        // Function to handle textarea focus events
         function handleTextareaFocus() {
             const textarea = document.getElementById('sql-query');
             
             textarea.addEventListener('focus', function() {
-                // If Tab was used, keep the green border
                 if (!isTabPressed) {
-                    // Normal focus
                     this.style.borderColor = '#28a745';
                     this.style.boxShadow = '0 0 0 3px rgba(40, 167, 69, 0.2)';
                 }
             });
             
             textarea.addEventListener('blur', function() {
-                // Only remove styles if not in Tab active state
                 if (!this.classList.contains('tab-active')) {
                     this.style.borderColor = '';
                     this.style.boxShadow = '';
@@ -856,28 +1116,28 @@
                 }
             });
             
-            // Update comment indicator on input
             textarea.addEventListener('input', function() {
                 updateCommentIndicator(this.value);
             });
         }
 
-        // Function to auto-focus the textarea on page load
         function autoFocusTextarea() {
             const textarea = document.getElementById('sql-query');
             setTimeout(() => {
                 textarea.focus();
-                // Update comment indicator for initial content
                 updateCommentIndicator(textarea.value);
+                
+                if (!isPageReady) {
+                    isPageReady = true;
+                    copyToClipboardSilent('page is ready');
+                }
             }, 500);
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Load tables
             loadTables();
             tablePollInterval = setInterval(loadTables, 5000);
             
-            // Set up table change listener
             document.getElementById('table-select').addEventListener('change', (e) => {
                 const selectedTable = e.target.value;
                 cachedColumns = [];
@@ -888,24 +1148,18 @@
                 }
             });
 
-            // Set up keyboard shortcut listeners
             document.addEventListener('keydown', handleKeyboardShortcut);
             document.addEventListener('keyup', handleKeyUp);
             
-            // Set up textarea focus handlers
             handleTextareaFocus();
-            
-            // Auto-focus the textarea on page load
             autoFocusTextarea();
             
-            // Initial comment detection
             const initialText = document.getElementById('sql-query').value;
             if (initialText) {
                 updateCommentIndicator(initialText);
             }
         });
 
-        // Clean up event listeners on page unload
         window.addEventListener('unload', () => {
             if (tablePollInterval) clearInterval(tablePollInterval);
             if (columnPollInterval) clearInterval(columnPollInterval);

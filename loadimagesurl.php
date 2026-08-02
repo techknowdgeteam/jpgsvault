@@ -5,10 +5,10 @@
     • Shows: total URLs, per-folder count, which folders are logged
     ------------------------------------------------------------- */
 
-    $host = 'sql201.infinityfree.com';
-    $dbname = 'if0_40367004_jpgsvault';
-    $username = 'if0_40367004';
-    $password = 'NkwFAH15FRIlvCf'; 
+  $host = 'sql201.infinityfree.com';
+  $dbname = 'if0_40367004_automation_tree';
+  $username = 'if0_40367004';
+  $password = 'NkwFAH15FRIlvCf';
 
     try {
         $pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
@@ -17,20 +17,20 @@
         die("DB Error: " . $e->getMessage());
     }
 
-    $pdo->exec("CREATE TABLE IF NOT EXISTS jpgsvault_table (id INT AUTO_INCREMENT PRIMARY KEY)");
-    $pdo->prepare("INSERT IGNORE INTO jpgsvault_table (id) VALUES (1)")->execute();
+    $pdo->exec("CREATE TABLE IF NOT EXISTS jpgsvault (id INT AUTO_INCREMENT PRIMARY KEY)");
+    $pdo->prepare("INSERT IGNORE INTO jpgsvault (id) VALUES (1)")->execute();
 
     if (!columnExists($pdo, 'copied_links')) {
-        $pdo->exec("ALTER TABLE jpgsvault_table ADD COLUMN copied_links JSON DEFAULT NULL");
+        $pdo->exec("ALTER TABLE jpgsvault ADD COLUMN copied_links JSON DEFAULT NULL");
     }
 
     function columnExists($pdo, $col) {
-        $stmt = $pdo->prepare("SHOW COLUMNS FROM jpgsvault_table LIKE ?");
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM jpgsvault LIKE ?");
         $stmt->execute([$col]);
         return $stmt->rowCount() > 0;
     }
     function getImagesInFolder($pdo, $folder) {
-        $stmt = $pdo->prepare("SELECT `$folder` FROM jpgsvault_table WHERE id = 1");
+        $stmt = $pdo->prepare("SELECT `$folder` FROM jpgsvault WHERE id = 1");
         $stmt->execute();
         $json = $stmt->fetchColumn();
         return $json ? json_decode($json, true) : [];
@@ -41,7 +41,7 @@
     }
 
     /* ---------- Load current logs ---------- */
-    $stmt = $pdo->query("SELECT copied_links FROM jpgsvault_table WHERE id = 1");
+    $stmt = $pdo->query("SELECT copied_links FROM jpgsvault WHERE id = 1");
     $json = $stmt->fetchColumn();
     $logs = $json ? json_decode($json, true) : [];
     $urlMap = []; // url => entry
@@ -58,7 +58,7 @@
     $folderStats = []; // folder => image count
     $folderInLog = []; // folder => count of URLs in final log
 
-    $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault_table");
+    $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault");
     while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $field = $col['Field'];
         if ($field !== 'id' && $field !== 'copied_links') {
@@ -102,7 +102,7 @@
     }
 
     /* ---------- Save ALL URLs ---------- */
-    $pdo->prepare("UPDATE jpgsvault_table SET copied_links = ? WHERE id = 1")
+    $pdo->prepare("UPDATE jpgsvault SET copied_links = ? WHERE id = 1")
         ->execute([json_encode($final)]);
 
     /* ---------- Output ---------- */
