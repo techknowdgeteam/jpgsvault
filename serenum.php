@@ -3292,7 +3292,6 @@
     }
     
     // ===== GET SOURCE VALUES =====
-    // ===== GET SOURCE VALUES =====
     function getSourceValues(sourceType, submitAs) {
         const values = [];
         
@@ -3302,19 +3301,23 @@
                 const url = value.schedule && value.schedule[0] ? value.schedule[0] : '';
                 if (url) {
                     let submitData = '';
+                    let displayText = '';
                     
                     if (submitAs === 'key') {
                         submitData = key;
+                        displayText = key; // Display only the key
                     } else if (submitAs === 'value') {
                         submitData = url;
+                        displayText = url; // Display only the value (URL)
                     } else if (submitAs === 'both') {
                         submitData = JSON.stringify({ [key]: url });
+                        displayText = key + ' → ' + url; // Display both key and value
                     }
                     
                     values.push({ 
                         key: key, 
                         value: url,
-                        display: key + ' → ' + url,
+                        display: displayText,
                         submitData: submitData,
                         submitAs: submitAs,
                         isGrouped: false
@@ -3329,21 +3332,18 @@
             
             captions.forEach(item => {
                 if (item.name && item.captions && item.captions.length > 0) {
-                    // Store all captions for this author
                     const captionObjects = item.captions.map(caption => ({
                         'key-name': item.name,
                         'id': caption.id,
                         'description': caption.description
                     }));
                     
-                    // If author already exists, merge captions
                     if (authorCaptionMap[item.name]) {
                         authorCaptionMap[item.name] = authorCaptionMap[item.name].concat(captionObjects);
                     } else {
                         authorCaptionMap[item.name] = captionObjects;
                     }
                 } else if (item.name && (!item.captions || item.captions.length === 0)) {
-                    // Author with no captions
                     if (!authorCaptionMap[item.name]) {
                         authorCaptionMap[item.name] = [];
                     }
@@ -3353,20 +3353,18 @@
             // Now create entries for each unique author
             for (const [authorName, captionsList] of Object.entries(authorCaptionMap)) {
                 let submitData = '';
+                let displayText = '';
                 
                 if (submitAs === 'key') {
-                    // Submit only the author name as a string
                     submitData = authorName;
+                    displayText = authorName; // Display only the author name
                 } else if (submitAs === 'value') {
-                    // Submit the array of caption objects
                     submitData = JSON.stringify(captionsList);
+                    displayText = JSON.stringify(captionsList); // Display the captions JSON
                 } else if (submitAs === 'both') {
-                    // Submit the array of caption objects with key-name as the author
                     submitData = JSON.stringify(captionsList);
+                    displayText = authorName + ' (' + captionsList.length + ' captions)'; // Display author + count
                 }
-                
-                // Display just the author name in the dropdown
-                const displayText = authorName + (captionsList.length > 0 ? ` (${captionsList.length} captions)` : ' (no captions)');
                 
                 values.push({ 
                     key: authorName,
@@ -3382,27 +3380,24 @@
         } else if (sourceType === 'timeorders') {
             const timeOrders = configData.timeorders || {};
             
-            // For each time order, submit all times
             for (const [orderName, timesList] of Object.entries(timeOrders)) {
                 let submitData = '';
+                let displayText = '';
                 
                 if (submitAs === 'key') {
-                    // Submit only the order name as a string
                     submitData = orderName;
+                    displayText = orderName; // Display only the order name
                 } else if (submitAs === 'value') {
-                    // Submit the array of time objects
                     submitData = JSON.stringify(timesList);
+                    displayText = JSON.stringify(timesList); // Display the times JSON
                 } else if (submitAs === 'both') {
-                    // Submit the array of time objects
-                    submitData = JSON.stringify(timesList);
+                    submitData = JSON.stringify({ [orderName]: timesList });
+                    displayText = orderName + ' (' + (Array.isArray(timesList) ? timesList.length : 0) + ' times)'; // Display order + count
                 }
-                
-                // Display just the order name in the dropdown
-                const displayText = orderName + (Array.isArray(timesList) && timesList.length > 0 ? ` (${timesList.length} times)` : ' (no times)');
                 
                 values.push({ 
                     key: orderName,
-                    value: timesList, // Store the full times array
+                    value: timesList,
                     display: displayText,
                     submitData: submitData,
                     submitAs: submitAs,
@@ -3415,18 +3410,23 @@
             const countries = configData.countries || [];
             countries.forEach(country => {
                 let submitData = '';
+                let displayText = '';
+                
                 if (submitAs === 'key') {
                     submitData = country;
+                    displayText = country; // Display only the country name
                 } else if (submitAs === 'value') {
                     submitData = country;
+                    displayText = country; // Display only the country name
                 } else if (submitAs === 'both') {
                     submitData = JSON.stringify({ [country]: country });
+                    displayText = country; // Display the country name
                 }
                 
                 values.push({ 
                     key: country, 
                     value: country,
-                    display: country,
+                    display: displayText,
                     submitData: submitData,
                     submitAs: submitAs,
                     isGrouped: false
@@ -3439,24 +3439,24 @@
                 const urlCount = data.count || 0;
                 const urls = data.urls || [];
                 
-                let displayLabel = `${folder} (${urlCount} URLs)`;
+                let displayText = '';
                 let submitData = '';
                 
                 if (submitAs === 'key') {
-                    // Submit folder name with count: "folder a 20"
                     submitData = `${folder} ${urlCount}`;
+                    displayText = folder; // Display only the folder name
                 } else if (submitAs === 'value') {
-                    // Submit all URLs as JSON array of strings: ["url1", "url2", ...]
                     submitData = JSON.stringify(urls);
+                    displayText = JSON.stringify(urls); // Display the URLs JSON
                 } else if (submitAs === 'both') {
-                    // Submit as key-value: {"foldername": "url1, url2, ..."}
                     submitData = JSON.stringify({ [folder]: urls.join(', ') });
+                    displayText = folder + ' (' + urlCount + ' URLs)'; // Display folder + count
                 }
                 
                 values.push({
                     key: folder,
                     value: urls,
-                    display: displayLabel,
+                    display: displayText,
                     submitData: submitData,
                     submitAs: submitAs,
                     urlCount: urlCount,
