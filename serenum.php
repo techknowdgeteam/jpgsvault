@@ -1,4 +1,48 @@
 <?php
+    // serenum.php - Serenum Configuration
+    session_start();
+
+    // Check if user is authenticated
+    $isAuthenticated = isset($_SESSION['jpgsvault_authenticated']) && $_SESSION['jpgsvault_authenticated'] === true;
+
+    // Check inactivity timeout (30 minutes)
+    if ($isAuthenticated && isset($_SESSION['jpgsvault_last_activity'])) {
+        if (time() - $_SESSION['jpgsvault_last_activity'] > 1800) {
+            session_destroy();
+            $isAuthenticated = false;
+        } else {
+            $_SESSION['jpgsvault_last_activity'] = time();
+        }
+    }
+
+    // If not authenticated, redirect to login page
+    if (!$isAuthenticated) {
+        header('Location: login.php');
+        exit;
+    }
+    // Handle Logout
+    if (isset($_POST['action']) && $_POST['action'] === 'logout') {
+        session_destroy();
+        echo json_encode(['success' => true]);
+        exit;
+    }
+
+    // Handle Check Auth
+    if (isset($_GET['action']) && $_GET['action'] === 'check_auth') {
+        $authenticated = isset($_SESSION['jpgsvault_authenticated']) && $_SESSION['jpgsvault_authenticated'] === true;
+        
+        if ($authenticated && isset($_SESSION['jpgsvault_last_activity'])) {
+            if (time() - $_SESSION['jpgsvault_last_activity'] > 1800) {
+                session_destroy();
+                $authenticated = false;
+            } else {
+                $_SESSION['jpgsvault_last_activity'] = time();
+            }
+        }
+        
+        echo json_encode(['authenticated' => $authenticated]);
+        exit;
+    }
     // Database configuration
     $host = 'sql201.infinityfree.com';
     $dbname = 'if0_40367004_automation_tree';
@@ -68,6 +112,9 @@
             if (!is_array($countriesData)) $countriesData = [];
             if (!is_array($dynamicFieldsData)) $dynamicFieldsData = [];
             
+            // ===== CRITICAL FIX: Normalize nested JSON strings =====
+            $settingsData = normalizeSettings($settingsData);
+            
             // Auto-repair settings: ensure it's always an array of objects
             $settingsData = repairSettings($settingsData);
             
@@ -126,6 +173,47 @@
             echo json_encode(['success' => false, 'message' => 'Error saving data: ' . $e->getMessage()]);
             exit;
         }
+    }
+
+    // ===== NEW FUNCTION: Normalize nested JSON strings =====
+    function normalizeSettings($settings) {
+        if (!is_array($settings)) {
+            return $settings;
+        }
+        
+        // Process each config in the settings array
+        foreach ($settings as &$config) {
+            if (!is_array($config)) continue;
+            
+            // List of fields that contain nested JSON strings
+            $jsonFields = ['account_url', 'author_caption', 'Jpgsurl', 'jpgsurl', 'time_order_type'];
+            
+            foreach ($jsonFields as $field) {
+                if (isset($config[$field]) && is_string($config[$field])) {
+                    // Try to decode the JSON string
+                    $decoded = json_decode($config[$field], true);
+                    if ($decoded !== null && json_last_error() === JSON_ERROR_NONE) {
+                        // It's valid JSON, replace the string with the decoded array/object
+                        $config[$field] = $decoded;
+                    }
+                    // If it's not valid JSON, leave it as is
+                }
+            }
+            
+            // Also handle dynamic_values if present (for backward compatibility)
+            if (isset($config['dynamic_values']) && is_array($config['dynamic_values'])) {
+                foreach ($jsonFields as $field) {
+                    if (isset($config['dynamic_values'][$field]) && is_string($config['dynamic_values'][$field])) {
+                        $decoded = json_decode($config['dynamic_values'][$field], true);
+                        if ($decoded !== null && json_last_error() === JSON_ERROR_NONE) {
+                            $config['dynamic_values'][$field] = $decoded;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return $settings;
     }
 
     // Helper function to repair settings structure
@@ -2084,9 +2172,16 @@
 <body>
     <!-- ===== HEADER ===== -->
     <div class="main-header" id="mainHeader">
-        <h1>Serenum Configuration</h1>
-        <div class="header-actions">
-            <button class="header-back" id="backToDashboardBtn" onclick="showDashboard()" style="display:none;">Back to Dashboard</button>
+        <div style="display:flex; align-items:center; gap:15px;">
+            <button class="header-back" id="backToDashboardBtn" onclick="location.href='serenum.php'" style="display:none; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.2); color:white; padding:8px 20px; border-radius:8px; cursor:pointer; font-size:14px; transition:all 0.3s; backdrop-filter:blur(5px);">
+                ← Back to Dashboard
+            </button>
+            <h1 style="font-size:22px; font-weight:600; text-shadow:0 2px 4px rgba(0,0,0,0.1);">Serenum Configuration</h1>
+        </div>
+        <div class="header-actions" style="display:flex; gap:10px; align-items:center;">
+            <button onclick="logout()" style="padding:8px 20px; background:linear-gradient(135deg, #e74c3c, #c0392b); color:white; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.3s; box-shadow:0 2px 10px rgba(231,76,60,0.3);">
+                Logout
+            </button>
         </div>
     </div>
     
@@ -2109,6 +2204,13 @@
             </div>
             
             <div class="config-grid">
+                <!-- JPGS Vault Card -->
+                <div class="config-card vault-card" onclick="location.href='jpgsvault.php'" style="background: linear-gradient(145deg, #ffffff, #f0faf5); color: #2c3e50; min-height: 160px; padding: 30px 25px; border: 1px solid rgba(46,204,113,0.08); cursor: pointer; transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); border-radius: 20px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; position: relative; overflow: hidden;">
+                    <div style="position:absolute; top:12px; right:12px; padding:3px 14px; border-radius:20px; font-size:11px; font-weight:600; color:white; background: linear-gradient(135deg, #6366f1, #8b5cf6); box-shadow:0 2px 8px rgba(99,102,241,0.3);">Live</div>
+                    <div style="font-size:40px; margin-bottom:8px; color: #6366f1;">🖼️</div>
+                    <div style="font-size:20px; font-weight:600; color:#2c3e50;">JPGS Vault</div>
+                    <div style="font-size:14px; opacity:0.7; margin-top:5px; color:#5a7a8a;">Secure image gallery with bulk upload and folder management</div>
+                </div>
                 
                 <!-- Setup Config Card -->
                 <div class="config-card setup-card" onclick="showSetupView()">
@@ -2116,6 +2218,7 @@
                     <div class="card-title">Setup Config</div>
                     <div class="card-subtitle">Configure accounts, captions & time orders</div>
                 </div>
+                
                 <!-- Add New Config Card -->
                 <div class="config-card add-new" onclick="showAddConfig()">
                     <div class="card-icon">+</div>
@@ -4689,6 +4792,48 @@
             saveBtn.disabled = false;
         });
     }
+    function logout() {
+        fetch('', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=logout'
+        })
+        .then(() => {
+            window.location.href = 'index.php';
+        })
+        .catch(() => {
+            window.location.href = 'index.php';
+        });
+    }
+
+    function checkAuth() {
+        fetch('?action=check_auth')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.authenticated) {
+                    window.location.href = 'login.php';
+                }
+            })
+            .catch(() => {
+                window.location.href = 'login.php';
+            });
+    }
+
+    // Auto-logout after 30 minutes of inactivity
+    let activityTimer;
+    function resetActivityTimer() {
+        if (activityTimer) clearTimeout(activityTimer);
+        activityTimer = setTimeout(() => {
+            logout();
+        }, 30 * 60 * 1000);
+    }
+
+    ['click', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(event => {
+        document.addEventListener(event, resetActivityTimer);
+    });
+
+    resetActivityTimer();
+    setInterval(checkAuth, 60000);
     
     // ===== INIT =====
     document.addEventListener('DOMContentLoaded', function() {

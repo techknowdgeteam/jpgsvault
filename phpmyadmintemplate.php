@@ -1,5 +1,5 @@
 <?php
-// phpmyadmintemplate.php
+// phpmyadmintemplate.php - Integrated with uploaded JPGs auto-move system
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -151,6 +151,12 @@
             border: 1px solid #bee5eb; 
             display: block;
         }
+        #message.warning { 
+            color: #856404; 
+            background-color: #fff3cd; 
+            border: 1px solid #ffeeba; 
+            display: block;
+        }
 
         .keyboard-hint {
             font-size: 12px;
@@ -191,6 +197,8 @@
             padding: 8px 12px;
             background-color: #f8f9fa;
             border-radius: 4px;
+            flex-wrap: wrap;
+            gap: 8px;
         }
 
         .result-header .result-info {
@@ -257,9 +265,151 @@
             }
         }
 
+        /* AUTO-PROCESS STATUS BAR - Always visible but minimal */
+        .upload-status-bar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
+            animation: slideDown 0.5s ease-out;
+            min-height: 40px;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .upload-status-bar.show {
+            display: flex;
+        }
+
+        .upload-status-bar .status-icon {
+            font-size: 18px;
+            margin-right: 8px;
+        }
+
+        .upload-status-bar .status-text {
+            flex: 1;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .upload-status-bar .status-text strong {
+            font-weight: 700;
+        }
+
+        .upload-status-bar .status-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .upload-status-bar .status-actions button {
+            padding: 4px 12px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            width: auto;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .upload-status-bar .status-actions button:hover {
+            background: rgba(255,255,255,0.35);
+            transform: scale(1.02);
+        }
+
+        .upload-status-bar .status-actions button.primary-btn {
+            background: white;
+            color: #764ba2;
+        }
+
+        .upload-status-bar .status-actions button.primary-btn:hover {
+            background: #f0f0f0;
+        }
+
+        .upload-status-bar .status-badge {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(5px);
+        }
+
+        .upload-status-bar .status-badge.warning {
+            background: rgba(255, 193, 7, 0.3);
+            border-color: #ffc107;
+        }
+
+        .upload-status-bar .status-badge.success {
+            background: rgba(40, 167, 69, 0.3);
+            border-color: #28a745;
+        }
+
+        /* Auto-process notification - appears briefly then disappears */
+        .auto-process-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            font-weight: bold;
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out;
+            display: none;
+            max-width: 400px;
+        }
+        .auto-process-notification.success {
+            background: #28a745;
+            color: white;
+        }
+        .auto-process-notification.error {
+            background: #dc3545;
+            color: white;
+        }
+        .auto-process-notification.info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
             .result-header { flex-direction: column; gap: 10px; align-items: stretch; }
+            .upload-status-bar { flex-direction: column; align-items: stretch; }
+            .upload-status-bar .status-actions { justify-content: center; }
         }
     </style>
 </head>
@@ -267,7 +417,25 @@
     <h1>Database Query Interface</h1>
     
     <div id="message"></div>
+    
+    <!-- AUTO-PROCESS STATUS BAR - Shows brief status then auto-processes -->
+    <div id="uploadStatusBar" class="upload-status-bar">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="status-icon" id="statusIcon">⏳</span>
+            <div class="status-text" id="statusText">
+                <strong>Checking for uploads...</strong>
+            </div>
+        </div>
+        <div class="status-actions">
+            <span class="status-badge" id="statusBadge">⏳</span>
+            <button class="primary-btn" id="processUploadedBtn" onclick="processUploadedJpgs()" style="display:none;">▶ Process</button>
+        </div>
+    </div>
+    
     <div class="reset-notification" id="resetNotification">🔄 Reset Complete</div>
+    
+    <!-- Auto-process notification popup -->
+    <div id="autoProcessNotification" class="auto-process-notification"></div>
     
     <div class="container">
         <div class="sidebar">
@@ -286,7 +454,7 @@
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <span class="comment-indicator" id="comment-indicator">No comments detected</span>
                     <span class="keyboard-hint">
-                        <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Ctrl+X</strong> to copy via button | <strong>Ctrl+M</strong> to copy directly | <strong>Ctrl+R+Delete</strong> to reset
+                        <strong>Tab</strong> to focus | <strong>Enter</strong> to execute | <strong>Ctrl+X</strong> to copy via button | <strong>Ctrl+M</strong> to copy directly | <strong>Ctrl+R+Delete</strong> to reset
                     </span>
                 </div>
             </div>
@@ -300,6 +468,7 @@
     <script>
         let tablePollInterval = null;
         let columnPollInterval = null;
+        let uploadStatusPollInterval = null;
         let cachedTables = [];
         let cachedColumns = [];
         let isTabPressed = false;
@@ -308,22 +477,19 @@
         let isPageReady = false;
         let isQueryExecuting = false;
         let isCtrlAPressed = false;
+        let hasAutoProcessed = false;
 
-        // Silent clipboard function - no alerts, no prompts (for non-copy operations)
+        // Silent clipboard function
         function copyToClipboardSilent(message) {
             try {
-                // Try modern clipboard API first
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(message).catch(() => {
-                        // Silently fallback
                         fallbackCopySilent(message);
                     });
                 } else {
-                    // Fallback method
                     fallbackCopySilent(message);
                 }
             } catch (e) {
-                // Silently fail - no alerts
                 console.log('Clipboard update:', message);
             }
         }
@@ -343,17 +509,12 @@
                 document.execCommand('copy');
                 document.body.removeChild(textarea);
             } catch (e) {
-                // Silently fail
                 console.log('Clipboard update (fallback):', message);
             }
         }
 
-        // PURE DATA COPY FUNCTION - only copies data, no metadata
         function copyPureDataToClipboard(data) {
-            if (!data) {
-                return false;
-            }
-            
+            if (!data) return false;
             try {
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(data).catch(() => {
@@ -393,7 +554,6 @@
             messageDiv.textContent = text;
             messageDiv.className = type;
             messageDiv.style.display = 'block';
-            
             if (type === 'info') {
                 setTimeout(() => {
                     messageDiv.style.display = 'none';
@@ -401,9 +561,19 @@
             }
         }
 
-        // RESET FUNCTION - Clears everything
+        function showAutoNotification(message, type = 'success') {
+            const notification = document.getElementById('autoProcessNotification');
+            notification.textContent = message;
+            notification.className = 'auto-process-notification ' + type;
+            notification.style.display = 'block';
+            
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
         function resetEverything() {
-            // Clear textarea
             const textarea = document.getElementById('sql-query');
             textarea.value = '';
             textarea.classList.remove('tab-active');
@@ -411,53 +581,188 @@
             textarea.style.boxShadow = '';
             textarea.style.backgroundColor = '';
             
-            // Clear query result
             const resultDiv = document.getElementById('query-result');
             resultDiv.innerHTML = '';
             
-            // Clear column data
             const columnDataDiv = document.getElementById('column-data');
             columnDataDiv.innerHTML = '';
             
-            // Clear last query result
             lastQueryResult = null;
-            
-            // Clear comment indicator
             updateCommentIndicator('');
             
-            // Clear message
             const messageDiv = document.getElementById('message');
             messageDiv.style.display = 'none';
             messageDiv.className = '';
             messageDiv.textContent = '';
             
-            // Clear clipboard (silently)
             try {
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText('').catch(() => {});
                 }
             } catch (e) {}
             
-            // Reset any active states
             isQueryExecuting = false;
             isCtrlAPressed = false;
-            
-            // Show reset notification
             showResetNotification();
-            
-            // Log reset action
-            console.log('Page reset to initial state');
         }
 
         function showResetNotification() {
             const notification = document.getElementById('resetNotification');
             notification.style.display = 'block';
-            
-            // Hide after 2 seconds
             setTimeout(() => {
                 notification.style.display = 'none';
             }, 2000);
         }
+
+        // ============================================================
+        // UPLOADED JPGS - AUTO PROCESS ON LOAD
+        // ============================================================
+        
+        function checkAndAutoProcessUploadedJpgs() {
+            const statusBar = document.getElementById('uploadStatusBar');
+            const statusText = document.getElementById('statusDetail') || document.querySelector('#statusText');
+            const statusBadge = document.getElementById('statusBadge');
+            const statusIcon = document.getElementById('statusIcon');
+            const processBtn = document.getElementById('processUploadedBtn');
+            
+            statusBar.className = 'upload-status-bar show';
+            statusIcon.textContent = '⏳';
+            statusBadge.textContent = '⏳ Checking';
+            
+            fetch('uploadedjpgsurl.php?action=status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.has_data && data.url_count > 0) {
+                        // Show status briefly
+                        statusIcon.textContent = '📸';
+                        statusBadge.textContent = `📦 ${data.url_count} URLs`;
+                        statusBadge.className = 'status-badge warning';
+                        
+                        const detailText = `${data.url_count} URL(s) to move to: <strong>${data.folder}</strong>`;
+                        document.querySelector('#statusText').innerHTML = `
+                            <strong>📸 Processing uploads...</strong><br>
+                            ${detailText}
+                        `;
+                        
+                        // Auto-process immediately
+                        if (!hasAutoProcessed) {
+                            hasAutoProcessed = true;
+                            processUploadedJpgsAuto();
+                        }
+                    } else {
+                        // No data - hide status bar
+                        statusBar.className = 'upload-status-bar';
+                        document.querySelector('#statusText').innerHTML = `
+                            <strong>✅ No pending uploads</strong>
+                        `;
+                        statusBadge.textContent = '✅';
+                        statusBadge.className = 'status-badge success';
+                    }
+                })
+                .catch(error => {
+                    console.error('Status check failed:', error);
+                    statusBar.className = 'upload-status-bar';
+                    document.querySelector('#statusText').innerHTML = `
+                        <strong>⚠️ Status check failed</strong>
+                    `;
+                    statusBadge.textContent = '⚠️';
+                    statusBadge.className = 'status-badge warning';
+                });
+        }
+
+        function processUploadedJpgsAuto() {
+            const processBtn = document.getElementById('processUploadedBtn');
+            const statusBadge = document.getElementById('statusBadge');
+            const statusIcon = document.getElementById('statusIcon');
+            
+            statusIcon.textContent = '⏳';
+            statusBadge.textContent = '⏳ Processing';
+            statusBadge.className = 'status-badge warning';
+            document.querySelector('#statusText').innerHTML = `<strong>⏳ Processing...</strong>`;
+            
+            fetch('uploadedjpgsurl.php?action=process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'action=process'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let message = '';
+                        let notificationType = 'success';
+                        
+                        if (data.moved_count > 0) {
+                            message = `✅ Moved ${data.moved_count} images to ${data.uploaded_folder}`;
+                            if (data.moved_from_folders && data.moved_from_folders.length > 0) {
+                                message += ` from ${data.moved_from_folders.join(', ')}`;
+                            }
+                            statusIcon.textContent = '✅';
+                            statusBadge.textContent = `✅ ${data.moved_count} moved`;
+                            statusBadge.className = 'status-badge success';
+                        } else if (data.urls_not_found && data.urls_not_found.length > 0) {
+                            message = `⚠️ ${data.urls_not_found.length} URL(s) not found`;
+                            statusIcon.textContent = '⚠️';
+                            statusBadge.textContent = `⚠️ ${data.urls_not_found.length} not found`;
+                            statusBadge.className = 'status-badge warning';
+                            notificationType = 'warning';
+                        } else {
+                            message = 'ℹ️ No images to move';
+                            statusIcon.textContent = 'ℹ️';
+                            statusBadge.textContent = 'ℹ️ No data';
+                            statusBadge.className = 'status-badge success';
+                            notificationType = 'info';
+                        }
+                        
+                        document.querySelector('#statusText').innerHTML = `
+                            <strong>${message}</strong>
+                        `;
+                        
+                        // Show notification
+                        showAutoNotification(message, notificationType);
+                        
+                        // Hide status bar after 3 seconds
+                        setTimeout(() => {
+                            const statusBar = document.getElementById('uploadStatusBar');
+                            statusBar.className = 'upload-status-bar';
+                        }, 3000);
+                        
+                    } else {
+                        const errorMsg = '❌ ' + (data.message || 'Process failed');
+                        statusIcon.textContent = '❌';
+                        statusBadge.textContent = '❌ Failed';
+                        statusBadge.className = 'status-badge warning';
+                        document.querySelector('#statusText').innerHTML = `<strong>${errorMsg}</strong>`;
+                        showAutoNotification(errorMsg, 'error');
+                        
+                        setTimeout(() => {
+                            const statusBar = document.getElementById('uploadStatusBar');
+                            statusBar.className = 'upload-status-bar';
+                        }, 3000);
+                    }
+                })
+                .catch(error => {
+                    const errorMsg = '❌ Error: ' + error.message;
+                    statusIcon.textContent = '❌';
+                    statusBadge.textContent = '❌ Error';
+                    statusBadge.className = 'status-badge warning';
+                    document.querySelector('#statusText').innerHTML = `<strong>${errorMsg}</strong>`;
+                    showAutoNotification(errorMsg, 'error');
+                    
+                    setTimeout(() => {
+                        const statusBar = document.getElementById('uploadStatusBar');
+                        statusBar.className = 'upload-status-bar';
+                    }, 3000);
+                });
+        }
+
+        // Manual process button (hidden by default, but available)
+        function processUploadedJpgs() {
+            processUploadedJpgsAuto();
+        }
+
+        // ============================================================
+        // END UPLOADED JPGS INTEGRATION
+        // ============================================================
 
         function loadTables() {
             fetch('phpmyadmin_tablesfetch.php')
@@ -539,25 +844,15 @@
                 const char = sqlText[i];
                 const nextChar = sqlText[i + 1] || '';
                 
-                if (char === '\n') {
-                    lineNumber++;
-                }
+                if (char === '\n') lineNumber++;
 
                 if (!inMultiLineComment && !inSingleQuote && !inDoubleQuote && !inBacktick) {
                     if ((char === '-' && nextChar === '-') || char === '#') {
                         let commentStart = i;
                         let commentEnd = sqlText.indexOf('\n', i);
                         if (commentEnd === -1) commentEnd = sqlText.length;
-                        
                         let commentText = sqlText.substring(commentStart, commentEnd).trim();
-                        comments.push({
-                            type: 'single-line',
-                            text: commentText,
-                            line: lineNumber,
-                            start: commentStart,
-                            end: commentEnd
-                        });
-                        
+                        comments.push({ type: 'single-line', text: commentText, line: lineNumber, start: commentStart, end: commentEnd });
                         i = commentEnd;
                         continue;
                     }
@@ -568,21 +863,10 @@
                         inMultiLineComment = true;
                         let commentStart = i;
                         let commentEnd = sqlText.indexOf('*/', i + 2);
-                        if (commentEnd === -1) {
-                            commentEnd = sqlText.length;
-                        } else {
-                            commentEnd += 2;
-                        }
-                        
+                        if (commentEnd === -1) commentEnd = sqlText.length;
+                        else commentEnd += 2;
                         let commentText = sqlText.substring(commentStart, commentEnd).trim();
-                        comments.push({
-                            type: 'multi-line',
-                            text: commentText,
-                            line: lineNumber,
-                            start: commentStart,
-                            end: commentEnd
-                        });
-                        
+                        comments.push({ type: 'multi-line', text: commentText, line: lineNumber, start: commentStart, end: commentEnd });
                         i = commentEnd;
                         inMultiLineComment = false;
                         continue;
@@ -590,38 +874,24 @@
                 }
 
                 if (!inMultiLineComment) {
-                    if (char === "'" && !inDoubleQuote && !inBacktick) {
-                        inSingleQuote = !inSingleQuote;
-                    } else if (char === '"' && !inSingleQuote && !inBacktick) {
-                        inDoubleQuote = !inDoubleQuote;
-                    } else if (char === '`' && !inSingleQuote && !inDoubleQuote) {
-                        inBacktick = !inBacktick;
-                    }
+                    if (char === "'" && !inDoubleQuote && !inBacktick) inSingleQuote = !inSingleQuote;
+                    else if (char === '"' && !inSingleQuote && !inBacktick) inDoubleQuote = !inDoubleQuote;
+                    else if (char === '`' && !inSingleQuote && !inDoubleQuote) inBacktick = !inBacktick;
                 }
 
-                if (!inMultiLineComment) {
-                    cleanQuery += char;
-                }
-
+                if (!inMultiLineComment) cleanQuery += char;
                 i++;
             }
 
             cleanQuery = cleanQuery.trim();
-            cleanQuery = cleanQuery.split('\n')
-                .filter(line => line.trim() !== '')
-                .join('\n');
+            cleanQuery = cleanQuery.split('\n').filter(line => line.trim() !== '').join('\n');
 
-            return {
-                cleanQuery: cleanQuery,
-                comments: comments,
-                hasComments: comments.length > 0
-            };
+            return { cleanQuery, comments, hasComments: comments.length > 0 };
         }
 
         function updateCommentIndicator(sqlText) {
             const indicator = document.getElementById('comment-indicator');
             const parsed = parseSqlQuery(sqlText);
-            
             if (parsed.hasComments) {
                 indicator.textContent = `✓ ${parsed.comments.length} comment(s) detected`;
                 indicator.className = 'comment-indicator has-comments';
@@ -631,129 +901,44 @@
             }
         }
 
-        // Detect if query is a data modification query (INSERT, UPDATE, DELETE, etc.)
         function isDataModificationQuery(sqlQuery) {
             if (!sqlQuery) return false;
             const trimmed = sqlQuery.trim().toUpperCase();
-            // Check for INSERT, UPDATE, DELETE, REPLACE, TRUNCATE, DROP, ALTER, CREATE
             const modificationKeywords = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'TRUNCATE', 'DROP', 'ALTER', 'CREATE'];
             return modificationKeywords.some(keyword => trimmed.startsWith(keyword));
         }
 
-        // FORMAT DATA WITHOUT COLUMN HEADERS - PURE VALUES ONLY
         function formatDataForCopyPure(data, columnMeta) {
-            if (!data || data.length === 0) {
-                return '';
-            }
-
+            if (!data || data.length === 0) return '';
             let result = [];
             const headers = columnMeta.map(col => col.name);
-            
             data.forEach(row => {
                 const rowValues = headers.map(header => {
                     let value = row[header];
-                    
-                    if (value === null || value === undefined) {
-                        return 'NULL';
-                    }
-                    
-                    if (typeof value === 'object') {
-                        return JSON.stringify(value, null, 2);
-                    }
-                    
+                    if (value === null || value === undefined) return 'NULL';
+                    if (typeof value === 'object') return JSON.stringify(value, null, 2);
                     if (typeof value === 'string') {
                         const trimmed = value.trim();
                         if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
                             (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-                            try {
-                                const parsed = JSON.parse(trimmed);
-                                return JSON.stringify(parsed, null, 2);
-                            } catch (e) {
-                                return value;
-                            }
-                        }
-                        if (trimmed.includes(',') && !trimmed.includes(' ')) {
-                            const items = trimmed.split(',').map(item => item.trim());
-                            return JSON.stringify(items, null, 2);
+                            try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch(e) { return value; }
                         }
                         return value;
                     }
-                    
                     return String(value);
                 });
                 result.push(rowValues.join('\t'));
             });
-            
             return result.join('\n');
         }
 
-        // FORMAT DATA WITH COLUMN HEADERS (for display purposes only)
-        function formatDataForCopyWithHeaders(data, columnMeta) {
-            if (!data || data.length === 0) {
-                return '';
-            }
-
-            let result = [];
-            const headers = columnMeta.map(col => col.name);
-            result.push(headers.join('\t'));
-            
-            data.forEach(row => {
-                const rowValues = headers.map(header => {
-                    let value = row[header];
-                    
-                    if (value === null || value === undefined) {
-                        return 'NULL';
-                    }
-                    
-                    if (typeof value === 'object') {
-                        return JSON.stringify(value, null, 2);
-                    }
-                    
-                    if (typeof value === 'string') {
-                        const trimmed = value.trim();
-                        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
-                            (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-                            try {
-                                const parsed = JSON.parse(trimmed);
-                                return JSON.stringify(parsed, null, 2);
-                            } catch (e) {
-                                return value;
-                            }
-                        }
-                        if (trimmed.includes(',') && !trimmed.includes(' ')) {
-                            const items = trimmed.split(',').map(item => item.trim());
-                            return JSON.stringify(items, null, 2);
-                        }
-                        return value;
-                    }
-                    
-                    return String(value);
-                });
-                result.push(rowValues.join('\t'));
-            });
-            
-            return result.join('\n');
-        }
-
-        // PURE COPY - only data values, NO column headers
         function copyQueryResultsPure() {
-            if (!lastQueryResult) {
-                return;
-            }
-
+            if (!lastQueryResult) return;
             const { data, columnMeta } = lastQueryResult;
-            
-            if (!data || data.length === 0) {
-                return;
-            }
-
-            // Use PURE format - NO headers
+            if (!data || data.length === 0) return;
             const formattedData = formatDataForCopyPure(data, columnMeta);
-            
             if (formattedData) {
                 copyPureDataToClipboard(formattedData);
-                
-                // Update button visual feedback
                 const copyBtn = document.getElementById('copy-results-btn');
                 if (copyBtn) {
                     copyBtn.textContent = '✓ Copied!';
@@ -766,79 +951,39 @@
             }
         }
 
-        // Function for copy button - copies WITH headers for clarity (but we'll make it pure too for consistency)
-        function copyQueryResults() {
-            copyQueryResultsPure();
-        }
+        function copyQueryResults() { copyQueryResultsPure(); }
 
         function copyQueryResultDirectly() {
-            // Copy the result directly from the query result div - PURE DATA ONLY (NO HEADERS)
             const resultDiv = document.getElementById('query-result');
-            if (!resultDiv) {
-                return;
-            }
-
-            // Try to get the result from the lastQueryResult first
+            if (!resultDiv) return;
             if (lastQueryResult && lastQueryResult.data && lastQueryResult.data.length > 0) {
-                // Use PURE format - NO headers
                 const formattedData = formatDataForCopyPure(lastQueryResult.data, lastQueryResult.columnMeta);
-                if (formattedData && formattedData !== 'No results to copy') {
-                    copyPureDataToClipboard(formattedData);
-                    return;
-                }
+                if (formattedData) { copyPureDataToClipboard(formattedData); return; }
             }
-
-            // Fallback: try to get from the table in the result div (skip the header row)
             const table = resultDiv.querySelector('table');
             if (table) {
-                // Extract text from table - SKIP THE HEADER ROW (first row)
                 let resultText = '';
                 const rows = table.querySelectorAll('tr');
                 let isFirstRow = true;
                 rows.forEach(row => {
-                    // Skip the header row (first row with th elements)
-                    if (isFirstRow) {
-                        isFirstRow = false;
-                        return;
-                    }
+                    if (isFirstRow) { isFirstRow = false; return; }
                     const cells = row.querySelectorAll('td');
                     const rowText = Array.from(cells).map(cell => cell.textContent.trim()).join('\t');
-                    if (rowText) {
-                        resultText += rowText + '\n';
-                    }
+                    if (rowText) resultText += rowText + '\n';
                 });
-                
-                if (resultText) {
-                    copyPureDataToClipboard(resultText.trim());
-                    return;
-                }
+                if (resultText) copyPureDataToClipboard(resultText.trim());
             }
         }
 
         function executeQuery() {
-            if (isQueryExecuting) {
-                return; // Prevent multiple simultaneous executions
-            }
-
+            if (isQueryExecuting) return;
             const fullSqlText = document.getElementById('sql-query').value;
             const resultDiv = document.getElementById('query-result');
-
-            if (!fullSqlText.trim()) {
-                copyToClipboardSilent('invalid response');
-                return;
-            }
-
+            if (!fullSqlText.trim()) { copyToClipboardSilent('invalid response'); return; }
             const parsed = parseSqlQuery(fullSqlText);
             const cleanQuery = parsed.cleanQuery;
-
-            if (!cleanQuery) {
-                copyToClipboardSilent('invalid response');
-                return;
-            }
-
-            // Check if it's a data modification query
+            if (!cleanQuery) { copyToClipboardSilent('invalid response'); return; }
             const isModification = isDataModificationQuery(cleanQuery);
-
             isQueryExecuting = true;
 
             if (parsed.hasComments) {
@@ -851,11 +996,7 @@
 
             const executeBtn = document.getElementById('execute-btn');
             executeBtn.style.backgroundColor = '#28a745';
-            setTimeout(() => {
-                executeBtn.style.backgroundColor = '#007bff';
-            }, 300);
-
-            // Silent clipboard update for enter activation
+            setTimeout(() => { executeBtn.style.backgroundColor = '#007bff'; }, 300);
             copyToClipboardSilent('enter button activated');
 
             fetch('phpmyadmin_tablesfetch.php', {
@@ -865,10 +1006,8 @@
             })
             .then(response => response.json())
             .then(data => {
-                // Handle data modification queries (INSERT, UPDATE, DELETE, etc.)
                 if (isModification) {
                     if (data.status === 'success') {
-                        // Copy success message to clipboard
                         let successMessage = 'Data updated successfully';
                         if (data.data && data.data.affectedRows !== undefined) {
                             successMessage = `${data.data.affectedRows} row(s) affected successfully`;
@@ -876,13 +1015,10 @@
                         copyPureDataToClipboard(successMessage);
                         showMessage('✅ ' + successMessage, 'success');
                     } else {
-                        // Copy error message to clipboard
                         const errorMessage = 'Error: ' + (data.message || 'Operation failed');
                         copyPureDataToClipboard(errorMessage);
                         showMessage(errorMessage, 'error');
                     }
-                    
-                    // Clear result display for modification queries (keep it clean)
                     resultDiv.innerHTML = '';
                     if (data.status === 'success') {
                         const affectedRows = data.data && data.data.affectedRows !== undefined ? data.data.affectedRows : 0;
@@ -895,28 +1031,17 @@
                             </p>
                         `;
                     }
-                    
                     isQueryExecuting = false;
                     return;
                 }
 
-                // Handle SELECT and other fetching queries (existing behavior)
-                if (data.status === 'success') {
-                    showMessage(data.message, 'success');
-                } else {
-                    showMessage(data.message, 'error');
-                    copyToClipboardSilent('invalid response');
-                }
+                if (data.status === 'success') showMessage(data.message, 'success');
+                else { showMessage(data.message, 'error'); copyToClipboardSilent('invalid response'); }
                 
                 resultDiv.innerHTML = '';
-
                 if (data.status === 'success' && data.data) {
                     if (data.data.rows && data.data.rows.length > 0) {
-                        lastQueryResult = {
-                            data: data.data.rows,
-                            columnMeta: data.data.columnMeta
-                        };
-
+                        lastQueryResult = { data: data.data.rows, columnMeta: data.data.columnMeta };
                         let resultHeader = `
                             <div class="result-header">
                                 <span class="result-info">📊 ${data.data.rows.length} row(s) returned</span>
@@ -925,39 +1050,29 @@
                                 </button>
                             </div>
                         `;
-
                         let tableHtml = resultHeader;
                         tableHtml += '<table><thead><tr>';
-                        data.data.columnMeta.forEach(col => {
-                            tableHtml += `<th>${col.name}</th>`;
-                        });
+                        data.data.columnMeta.forEach(col => { tableHtml += `<th>${col.name}</th>`; });
                         tableHtml += '</tr></thead><tbody>';
-
                         data.data.rows.forEach(row => {
                             tableHtml += '<tr>';
                             Object.values(row).forEach(value => {
                                 let displayValue = (typeof value === 'object' && value !== null) 
                                     ? JSON.stringify(value, null, 2) 
                                     : (value !== null ? String(value) : 'NULL');
-                                
                                 if (typeof value === 'string') {
                                     const trimmed = value.trim();
                                     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
                                         (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-                                        try {
-                                            const parsedJson = JSON.parse(trimmed);
-                                            displayValue = JSON.stringify(parsedJson, null, 2);
-                                        } catch (e) {}
+                                        try { displayValue = JSON.stringify(JSON.parse(trimmed), null, 2); } catch(e) {}
                                     }
                                 }
-                                
                                 tableHtml += `<td><pre style="margin:0; white-space:pre-wrap;">${displayValue}</pre></td>`;
                             });
                             tableHtml += '</tr>';
                         });
                         tableHtml += '</tbody></table>';
                         resultDiv.innerHTML = tableHtml;
-
                     } else if (data.data.affectedRows !== undefined) {
                         resultDiv.innerHTML = `
                             <div class="result-header">
@@ -991,104 +1106,70 @@
         function handleKeyboardShortcut(event) {
             const textarea = document.getElementById('sql-query');
 
-            // Handle Ctrl+A to detect selection
             if (event.type === 'keydown' && event.ctrlKey && (event.key === 'r' || event.key === 'R')) {
                 isCtrlAPressed = true;
                 return;
             }
 
-            // Handle Delete/Backspace when Ctrl+A is active
             if (event.type === 'keydown' && isCtrlAPressed && (event.key === 'Delete' || event.key === 'Del' || event.key === 'Backspace')) {
-                // Check if textarea is focused or has content
                 if (document.activeElement === textarea || textarea.value.length > 0) {
                     event.preventDefault();
                     event.stopPropagation();
-                    
-                    // Reset everything
                     resetEverything();
-                    
-                    // Reset Ctrl+A state
                     isCtrlAPressed = false;
                     return;
                 }
             }
 
-            // Reset Ctrl+A state if other keys are pressed
             if (event.type === 'keydown' && !(event.ctrlKey && (event.key === 'a' || event.key === 'A'))) {
-                // Only reset if not part of Ctrl+A
                 if (!event.ctrlKey || (event.key !== 'a' && event.key !== 'A' && event.key !== 'Delete' && event.key !== 'Del' && event.key !== 'Backspace')) {
                     isCtrlAPressed = false;
                 }
             }
 
-            // Handle Tab key for focusing textarea
             if (event.key === 'Tab') {
                 isTabPressed = event.type === 'keydown';
                 if (event.type === 'keydown') {
                     event.preventDefault();
-                    
                     textarea.focus();
                     textarea.classList.add('tab-active');
                     copyToClipboardSilent('text area is on focus');
-                    
-                    if (tabTimeout) {
-                        clearTimeout(tabTimeout);
-                    }
+                    if (tabTimeout) clearTimeout(tabTimeout);
                 }
             }
 
-            // Handle Ctrl+X for copying results via button click - PURE DATA ONLY
             if (event.type === 'keydown' && event.ctrlKey && (event.key === 'x' || event.key === 'X')) {
-                event.preventDefault(); // Prevent cut operation
-                // Use pure copy function directly
+                event.preventDefault();
                 copyQueryResultsPure();
                 return;
             }
 
-            // Handle Ctrl+M for direct copy of query result - PURE DATA ONLY
             if (event.type === 'keydown' && event.ctrlKey && (event.key === 'm' || event.key === 'M')) {
                 event.preventDefault();
                 copyQueryResultDirectly();
                 return;
             }
 
-            // Handle Enter key for executing query
             if (event.type === 'keydown' && event.key === 'Enter' && !event.shiftKey) {
                 if (document.activeElement === textarea && !event.shiftKey) {
-                    event.preventDefault(); // Prevent newline in textarea
+                    event.preventDefault();
                     executeQuery();
-                    
                     const executeBtn = document.getElementById('execute-btn');
                     executeBtn.style.backgroundColor = '#28a745';
-                    setTimeout(() => {
-                        executeBtn.style.backgroundColor = '#007bff';
-                    }, 300);
+                    setTimeout(() => { executeBtn.style.backgroundColor = '#007bff'; }, 300);
                 }
             }
         }
 
         function handleKeyUp(event) {
             const textarea = document.getElementById('sql-query');
-            
-            if (event.target === textarea) {
-                updateCommentIndicator(textarea.value);
-            }
-            
-            // Reset Ctrl+A state on keyup
+            if (event.target === textarea) updateCommentIndicator(textarea.value);
             if (event.key === 'Control' || event.key === 'a' || event.key === 'A') {
-                // Don't reset immediately, allow Delete to be detected
-                setTimeout(() => {
-                    isCtrlAPressed = false;
-                }, 100);
+                setTimeout(() => { isCtrlAPressed = false; }, 100);
             }
-            
             if (event.key === 'Tab') {
                 isTabPressed = false;
-                
-                if (tabTimeout) {
-                    clearTimeout(tabTimeout);
-                }
-                
+                if (tabTimeout) clearTimeout(tabTimeout);
                 tabTimeout = setTimeout(() => {
                     textarea.classList.remove('tab-active');
                     textarea.style.borderColor = '';
@@ -1100,14 +1181,12 @@
 
         function handleTextareaFocus() {
             const textarea = document.getElementById('sql-query');
-            
             textarea.addEventListener('focus', function() {
                 if (!isTabPressed) {
                     this.style.borderColor = '#28a745';
                     this.style.boxShadow = '0 0 0 3px rgba(40, 167, 69, 0.2)';
                 }
             });
-            
             textarea.addEventListener('blur', function() {
                 if (!this.classList.contains('tab-active')) {
                     this.style.borderColor = '';
@@ -1115,7 +1194,6 @@
                     this.style.backgroundColor = '';
                 }
             });
-            
             textarea.addEventListener('input', function() {
                 updateCommentIndicator(this.value);
             });
@@ -1126,7 +1204,6 @@
             setTimeout(() => {
                 textarea.focus();
                 updateCommentIndicator(textarea.value);
-                
                 if (!isPageReady) {
                     isPageReady = true;
                     copyToClipboardSilent('page is ready');
@@ -1155,9 +1232,12 @@
             autoFocusTextarea();
             
             const initialText = document.getElementById('sql-query').value;
-            if (initialText) {
-                updateCommentIndicator(initialText);
-            }
+            if (initialText) updateCommentIndicator(initialText);
+            
+            // AUTO-PROCESS: Check and process uploaded JPGs on load
+            setTimeout(() => {
+                checkAndAutoProcessUploadedJpgs();
+            }, 800); // Small delay to ensure page is fully loaded
         });
 
         window.addEventListener('unload', () => {
