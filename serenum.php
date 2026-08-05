@@ -217,6 +217,7 @@
     }
 
     // Helper function to repair settings structure
+    // Helper function to repair settings structure
     function repairSettings($settings) {
         // If not an array, return empty array
         if (!is_array($settings)) {
@@ -226,33 +227,40 @@
         // If it's already an indexed array of objects, just filter out non-objects
         if (isset($settings[0]) && is_array($settings[0])) {
             return array_values(array_filter($settings, function($item) {
-                return is_array($item) && isset($item['author']);
+                return is_array($item);
             }));
         }
         
-        // If it's a single object with 'author' key, wrap it in an array
-        if (isset($settings['author'])) {
+        // If it's a single object, wrap it in an array
+        if (isset($settings['status']) || isset($settings['dynamic_values'])) {
             return [$settings];
         }
         
-        // Try to extract objects with 'author' key
+        // Try to extract objects with 'status' or 'dynamic_values' key
         $result = [];
         foreach ($settings as $key => $value) {
-            if (is_array($value) && isset($value['author'])) {
+            if (is_array($value) && (isset($value['status']) || isset($value['dynamic_values']))) {
                 $result[] = $value;
             }
+        }
+        
+        // If we couldn't find any valid configs, return the original as-is
+        if (empty($result)) {
+            return $settings;
         }
         
         return $result;
     }
 
     // Handle Update Status
+    // Handle Update Status
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         try {
             $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
             $status = isset($_POST['status']) ? $_POST['status'] : '';
+            $author = isset($_POST['author']) ? $_POST['author'] : '';
             
-            if ($id > 0 && $status) {
+            if ($id > 0 && $status && $author) {
                 // Get current data
                 $stmt = $pdo->prepare("SELECT settings FROM serenum_config WHERE id = :id");
                 $stmt->execute([':id' => $id]);
@@ -268,8 +276,10 @@
                     // Find the configuration with matching author
                     $found = false;
                     foreach ($settings as &$config) {
-                        if (is_array($config) && isset($config['author']) && $config['author'] === $status) {
+                        if (is_array($config) && isset($config['author']) && $config['author'] === $author) {
                             $config['status'] = $status;
+                            // Add operation_status with function name
+                            $config['operation_status'] = "change_status: Status updated to '$status' for author '$author'";
                             $found = true;
                             break;
                         }
@@ -278,7 +288,7 @@
                     if (!$found) {
                         // If no config found, create a new one
                         $newConfig = [
-                            'author' => 'Unknown',
+                            'author' => $author,
                             'engine' => 'automation',
                             'page' => 'none',
                             'group' => 'include',
@@ -296,7 +306,7 @@
                             'author_account_url' => [],
                             'status' => $status,
                             'dynamic_values' => [],
-                            'operation_status' => ''
+                            'operation_status' => "change_status: Status set to '$status' for new author '$author'"
                         ];
                         $settings[] = $newConfig;
                     }
@@ -313,7 +323,7 @@
                 }
             }
             
-            echo json_encode(['success' => false, 'message' => 'Invalid request']);
+            echo json_encode(['success' => false, 'message' => 'Invalid request - missing id, status, or author']);
             exit;
         } catch(Exception $e) {
             echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
@@ -466,6 +476,14 @@
         }
         if (!isset($config['operation_status']) || empty($config['operation_status'])) {
             $config['operation_status'] = '';
+        }
+        // Ensure author exists - if not, create from dynamic_values or use a default
+        if (!isset($config['author']) || empty($config['author'])) {
+            if (isset($config['dynamic_values']['author'])) {
+                $config['author'] = $config['dynamic_values']['author'];
+            } else {
+                $config['author'] = 'Config_' . uniqid();
+            }
         }
     }
 
@@ -2574,7 +2592,6 @@
         loadCaptionAuthors();
         loadDynamicFields();
     }
-    
     function loadConfigForEdit(author) {
         // Find the config in the data
         const settings = configData.settings;
@@ -2582,13 +2599,20 @@
         
         if (Array.isArray(settings)) {
             for (let config of settings) {
-                if (config && config.author === author) {
-                    foundConfig = config;
-                    break;
+                if (config && typeof config === 'object') {
+                    // Check if config matches by author or by dynamic_values.author
+                    let configAuthor = config.author || (config.dynamic_values && config.dynamic_values.author);
+                    if (configAuthor === author) {
+                        foundConfig = config;
+                        break;
+                    }
                 }
             }
-        } else if (settings && settings.author === author) {
-            foundConfig = settings;
+        } else if (settings && typeof settings === 'object') {
+            let configAuthor = settings.author || (settings.dynamic_values && settings.dynamic_values.author);
+            if (configAuthor === author) {
+                foundConfig = settings;
+            }
         }
         
         if (foundConfig) {
@@ -2604,6 +2628,7 @@
             loadCountries();
             loadCaptionAuthors();
         } else {
+            // If config not found, create a temporary one with the author from dynamic_values
             showModal('Error', 'Configuration not found for author: ' + author);
         }
     }
@@ -2621,7 +2646,8 @@
         if (!settings || !Array.isArray(settings)) return configs;
         
         settings.forEach(config => {
-            if (config && typeof config === 'object' && config.author) {
+            if (config && typeof config === 'object') {
+                // Don't require author - display any config with or without author
                 const configStatus = (config.status || 'pending').toLowerCase();
                 if (configStatus === status) {
                     configs.push(config);
@@ -2665,6 +2691,20 @@
             
             const status = (config.status || 'pending').toLowerCase();
             
+            // Get author from dynamic_values or use a fallback
+            let author = 'Unknown Author';
+            if (config.dynamic_values && config.dynamic_values.author) {
+                author = config.dynamic_values.author;
+            } else if (config.author) {
+                author = config.author;
+            } else {
+                // Use the first dynamic value or a generic name
+                const firstKey = Object.keys(config.dynamic_values || {})[0];
+                if (firstKey) {
+                    author = firstKey;
+                }
+            }
+            
             // Build dynamic fields display
             let dynamicFieldsHtml = '';
             if (config.dynamic_values && typeof config.dynamic_values === 'object') {
@@ -2696,9 +2736,12 @@
                 `;
             }
             
+            // Use author for edit/delete functions - if no author, use first dynamic value
+            const authorParam = author;
+            
             div.innerHTML = `
                 <div class="item-header">
-                    <span class="item-author">${config.author || 'Unknown Author'}</span>
+                    <span class="item-author">${author}</span>
                     <span class="item-status" style="background: ${statusColor[status] || '#a0aec0'}">${statusLabel[status] || status}</span>
                 </div>
                 <div class="item-details">
@@ -2706,12 +2749,12 @@
                     ${operationStatusHtml}
                 </div>
                 <div class="item-actions">
-                    <button class="btn btn-edit-config" onclick="showEditConfig('${config.author}')">Edit</button>
-                    <button class="btn btn-delete" onclick="deleteConfig('${config.author}')">Delete</button>
-                    <button class="btn btn-status" onclick="changeStatus('${config.author}', 'successful')">Mark Successful</button>
-                    <button class="btn btn-status" onclick="changeStatus('${config.author}', 'aborted')">Mark Aborted</button>
-                    <button class="btn btn-status" onclick="changeStatus('${config.author}', 'incomplete')">Mark Incomplete</button>
-                    <button class="btn btn-status" onclick="changeStatus('${config.author}', 'pending')">Mark Pending</button>
+                    <button class="btn btn-edit-config" onclick="showEditConfig('${authorParam}')">Edit</button>
+                    <button class="btn btn-delete" onclick="deleteConfig('${authorParam}')">Delete</button>
+                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'successful')">Mark Successful</button>
+                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'aborted')">Mark Aborted</button>
+                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'incomplete')">Mark Incomplete</button>
+                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'pending')">Mark Pending</button>
                 </div>
             `;
             
