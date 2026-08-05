@@ -59,36 +59,53 @@
     // ===== GET COPIED LINKS DATA FROM JPGSVAULT =====
     function getCopiedLinksData($pdo) {
         try {
-            $stmt = $pdo->query("SELECT copied_links FROM jpgsvault WHERE id = 1");
-            $json = $stmt->fetchColumn();
-            if (!$json) return [];
-            
-            $logs = json_decode($json, true);
-            if (!is_array($logs)) return [];
-            
-            // Group by folder and count URLs
-            $folderData = [];
-            foreach ($logs as $log) {
-                if (!isset($log['folder']) || !isset($log['url'])) continue;
-                $folder = $log['folder'];
-                $url = $log['url'];
-                
-                if (!isset($folderData[$folder])) {
-                    $folderData[$folder] = [
-                        'folder' => $folder,
-                        'urls' => [],
-                        'count' => 0
-                    ];
-                }
-                
-                if (!in_array($url, $folderData[$folder]['urls'])) {
-                    $folderData[$folder]['urls'][] = $url;
-                    $folderData[$folder]['count']++;
+            // STEP 1: Get ALL columns from jpgsvault table (exactly like debug script)
+            $stmt = $pdo->query("SHOW COLUMNS FROM jpgsvault");
+            $allColumns = [];
+            while ($col = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $field = $col['Field'];
+                // Skip system columns (same as debug script)
+                if ($field !== 'id' && $field !== 'copied_links' && $field !== 'server_passkey' && 
+                    !str_starts_with($field, 'all_urls')) {
+                    $allColumns[] = $field;
                 }
             }
             
+            // STEP 2: Build folder data from ALL columns - reading each column's data
+            $folderData = [];
+            
+            foreach ($allColumns as $folder) {
+                // Get the images from this column (exactly like debug script's getImagesInFolder)
+                $stmt = $pdo->prepare("SELECT `$folder` FROM jpgsvault WHERE id = 1");
+                $stmt->execute();
+                $json = $stmt->fetchColumn();
+                $images = $json ? json_decode($json, true) : [];
+                if (!is_array($images)) $images = [];
+                
+                // Build URLs array from images
+                $urls = [];
+                foreach ($images as $image) {
+                    if (is_string($image)) {
+                        $urls[] = $image;
+                    }
+                }
+                
+                $folderData[$folder] = [
+                    'folder' => $folder,
+                    'urls' => $urls,
+                    'count' => count($urls)
+                ];
+            }
+            
+            // STEP 3: Sort folders by count (most URLs first) - like debug script
+            uasort($folderData, function($a, $b) {
+                return $b['count'] - $a['count'];
+            });
+            
             return $folderData;
+            
         } catch (PDOException $e) {
+            error_log("Error getting copied links data: " . $e->getMessage());
             return [];
         }
     }
@@ -101,7 +118,7 @@
             $accountsData = isset($_POST['accounts']) ? json_decode($_POST['accounts'], true) : [];
             $captionsData = isset($_POST['captions']) ? json_decode($_POST['captions'], true) : [];
             $timeordersData = isset($_POST['timeorders']) ? json_decode($_POST['timeorders'], true) : [];
-            $countriesData = isset($_POST['countries']) ? json_decode($_POST['countries'], true) : [];
+            $filtersData = isset($_POST['filters']) ? json_decode($_POST['filters'], true) : [];
             $dynamicFieldsData = isset($_POST['dynamic_fields']) ? json_decode($_POST['dynamic_fields'], true) : [];
             
             // Ensure data is properly formatted
@@ -109,7 +126,7 @@
             if (!is_array($accountsData)) $accountsData = [];
             if (!is_array($captionsData)) $captionsData = [];
             if (!is_array($timeordersData)) $timeordersData = [];
-            if (!is_array($countriesData)) $countriesData = [];
+            if (!is_array($filtersData)) $filtersData = [];
             if (!is_array($dynamicFieldsData)) $dynamicFieldsData = [];
             
             // ===== CRITICAL FIX: Normalize nested JSON strings =====
@@ -132,7 +149,7 @@
                     accounts_url = :accounts_url, 
                     captions = :captions, 
                     time_orders = :time_orders, 
-                    countries = :countries,
+                    filters = :filters,
                     settings_dynamic_fields = :dynamic_fields
                     WHERE id = :id");
                 
@@ -141,7 +158,7 @@
                     ':accounts_url' => json_encode($accountsData),
                     ':captions' => json_encode($captionsData),
                     ':time_orders' => json_encode($timeordersData),
-                    ':countries' => json_encode($countriesData),
+                    ':filters' => json_encode($filtersData),
                     ':dynamic_fields' => json_encode($dynamicFieldsData),
                     ':id' => $latestId
                 ];
@@ -151,16 +168,16 @@
             } else {
                 // Insert new record
                 $stmt = $pdo->prepare("INSERT INTO serenum_config 
-                    (settings, accounts_url, captions, time_orders, countries, settings_dynamic_fields) 
+                    (settings, accounts_url, captions, time_orders, filters, settings_dynamic_fields) 
                     VALUES 
-                    (:settings, :accounts_url, :captions, :time_orders, :countries, :dynamic_fields)");
+                    (:settings, :accounts_url, :captions, :time_orders, :filters, :dynamic_fields)");
                 
                 $params = [
                     ':settings' => json_encode($settingsData),
                     ':accounts_url' => json_encode($accountsData),
                     ':captions' => json_encode($captionsData),
                     ':time_orders' => json_encode($timeordersData),
-                    ':countries' => json_encode($countriesData),
+                    ':filters' => json_encode($filtersData),
                     ':dynamic_fields' => json_encode($dynamicFieldsData)
                 ];
                 
@@ -383,7 +400,7 @@
             
             if ($author) {
                 // Get current data
-                $stmt = $pdo->query("SELECT id, settings, accounts_url, captions, time_orders, countries, settings_dynamic_fields FROM serenum_config ORDER BY id DESC LIMIT 1");
+                $stmt = $pdo->query("SELECT id, settings, accounts_url, captions, time_orders, filters, settings_dynamic_fields FROM serenum_config ORDER BY id DESC LIMIT 1");
                 if ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                     $settings = json_decode($row['settings'], true) ?: [];
                     if (!is_array($settings)) $settings = [];
@@ -417,17 +434,17 @@
     $accounts_data = [];
     $captions_data = [];
     $timeorders_data = [];
-    $countries_data = [];
+    $filters_data = [];
     $dynamic_fields_data = [];
 
     try {
-        $stmt = $pdo->query("SELECT id, settings, accounts_url, captions, time_orders, countries, settings_dynamic_fields FROM serenum_config ORDER BY id DESC LIMIT 1");
+        $stmt = $pdo->query("SELECT id, settings, accounts_url, captions, time_orders, filters, settings_dynamic_fields FROM serenum_config ORDER BY id DESC LIMIT 1");
         if ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $settings_data = json_decode($row['settings'], true) ?: [];
             $accounts_data = json_decode($row['accounts_url'], true) ?: [];
             $captions_data = json_decode($row['captions'], true) ?: [];
             $timeorders_data = json_decode($row['time_orders'], true) ?: [];
-            $countries_data = json_decode($row['countries'], true) ?: [];
+            $filters_data = json_decode($row['filters'], true) ?: [];
             $dynamic_fields_data = json_decode($row['settings_dynamic_fields'], true) ?: [];
             $config_id = $row['id'];
         }
@@ -441,7 +458,7 @@
     if (!is_array($accounts_data)) $accounts_data = [];
     if (!is_array($captions_data)) $captions_data = [];
     if (!is_array($timeorders_data)) $timeorders_data = [];
-    if (!is_array($countries_data)) $countries_data = [];
+    if (!is_array($filters_data)) $filters_data = [];
     if (!is_array($dynamic_fields_data)) $dynamic_fields_data = [];
 
     // Auto-repair settings data
@@ -490,9 +507,8 @@
     // Group configurations by status
     $grouped_configs = [
         'pending' => [],
-        'successful' => [],
-        'aborted' => [],
-        'incomplete' => []
+        'completed' => [],
+        'aborted' => []
     ];
 
     foreach ($configurations as $config) {
@@ -506,16 +522,14 @@
     // Status labels for display
     $status_labels = [
         'pending' => 'Pending Operations',
-        'successful' => 'Successful Operations',
-        'aborted' => 'Aborted Operations',
-        'incomplete' => 'Incomplete Operations'
+        'completed' => 'Completed Operations',
+        'aborted' => 'Aborted Operations'
     ];
 
     $status_colors = [
         'pending' => '#f6ad55',
-        'successful' => '#48bb78',
-        'aborted' => '#fc8181',
-        'incomplete' => '#a0aec0'
+        'completed' => '#48bb78',
+        'aborted' => '#fc8181'
     ];
 
     // Get copied links data for use in JavaScript
@@ -2208,6 +2222,7 @@
         <button class="tab-btn active" onclick="switchTab('accounts', this)">Accounts URL</button>
         <button class="tab-btn" onclick="switchTab('captions', this)">Captions</button>
         <button class="tab-btn" onclick="switchTab('timeorders', this)">Time Orders</button>
+        <button class="tab-btn" onclick="switchTab('filters', this)">Filters</button>
         <button class="tab-btn" onclick="switchTab('dynamicfields', this)">Dynamic Fields</button>
     </div>
     
@@ -2245,12 +2260,12 @@
                 </div>
                 
                 <!-- Status Cards -->
-                <?php foreach (['pending', 'successful', 'aborted', 'incomplete'] as $status): ?>
+                <?php foreach (['pending', 'completed', 'aborted'] as $status): ?>
                     <?php 
                         $count = count($grouped_configs[$status] ?? []);
                         $label = $status_labels[$status] ?? ucfirst($status);
                         $color = $status_colors[$status] ?? '#a0aec0';
-                        $icon = ($status == 'pending') ? '⏳' : (($status == 'successful') ? '✅' : (($status == 'aborted') ? '❌' : '⚠️'));
+                        $icon = ($status == 'pending') ? '⏳' : (($status == 'completed') ? '✅' : '❌');
                     ?>
                     <div class="config-card status-card <?php echo $status; ?>" onclick="showDetailView('<?php echo $status; ?>')">
                         <div class="card-status-badge"><?php echo ucfirst($status); ?></div>
@@ -2287,15 +2302,6 @@
                     <h2 style="color: #333;" id="settingsTabTitle">Set Configuration</h2>
                 </div>
                 
-                <!-- ===== ONLY COUNTRY INPUT REMAINS HARDCODED ===== -->
-                <div class="form-group">
-                    <label>Countries</label>
-                    <div class="group-input-container">
-                        <input type="text" id="country_input" placeholder="Enter country name...">
-                        <button class="btn btn-primary" onclick="addCountry()">Add</button>
-                    </div>
-                    <div id="countries_list" style="margin-top: 10px;"></div>
-                </div>
                 
                 <!-- ===== DYNAMIC FIELDS RENDER AREA ===== -->
                 <div id="dynamicFieldsRenderArea">
@@ -2366,6 +2372,22 @@
                     
                     <div id="timeorders_list"></div>
                 </div>
+            
+                <!-- Filters Tab -->
+                <div id="filters-tab" class="tab-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="color: #333;">Filters</h2>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Add Filter</label>
+                        <div class="group-input-container">
+                            <input type="text" id="filter_input" placeholder="Enter filter name...">
+                            <button class="btn btn-primary" onclick="addFilter()">Add</button>
+                        </div>
+                        <div id="filters_list" style="margin-top: 10px;"></div>
+                    </div>
+                </div>
                 
                 <!-- Dynamic Fields Tab -->
                 <div id="dynamicfields-tab" class="tab-content">
@@ -2405,7 +2427,7 @@
         accounts: <?php echo json_encode($accounts_data); ?>,
         captions: <?php echo json_encode($captions_data); ?>,
         timeorders: <?php echo json_encode($timeorders_data); ?>,
-        countries: <?php echo json_encode($countries_data); ?>,
+        filters: <?php echo json_encode($filters_data); ?>,
         dynamic_fields: <?php echo json_encode($dynamic_fields_data); ?>
     };
     
@@ -2416,6 +2438,7 @@
     let isEditMode = false;
     let editingAuthor = '';
     let editingDynamicFieldKey = null;
+    let editingIndex = null;
     
     // Store time format preference per field
     let timeFormatPreferences = {};
@@ -2489,9 +2512,8 @@
         
         const statusLabels = {
             'pending': 'Pending Operations',
-            'successful': 'Successful Operations',
-            'aborted': 'Aborted Operations',
-            'incomplete': 'Incomplete Operations'
+            'completed': 'Completed Operations',
+            'aborted': 'Aborted Operations'
         };
         
         document.getElementById('detailTitle').innerHTML = (statusLabels[status] || status) + ' <span class="count" id="detailCount"></span>';
@@ -2524,7 +2546,7 @@
         loadAllData();
         renderDynamicFields();
     }
-    
+        
     function showSetupView() {
         clearEditMode();
         document.getElementById('dashboardView').style.display = 'none';
@@ -2548,9 +2570,55 @@
         loadSetupData();
     }
     
-    function showEditConfig(author) {
+    function showEditConfig(author, index) {
+        // If index is provided, use it
+        if (index !== undefined && index !== null) {
+            editConfigByIndex(index);
+            return;
+        }
+        
+        // Fallback: try to find by author (for backward compatibility)
+        const settings = configData.settings;
+        let foundIndex = -1;
+        
+        if (Array.isArray(settings)) {
+            for (let i = 0; i < settings.length; i++) {
+                if (settings[i] && typeof settings[i] === 'object') {
+                    let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
+                    if (configAuthor === author) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (foundIndex === -1) {
+            showModal('Error', 'Configuration not found for author: ' + author);
+            return;
+        }
+        
+        editConfigByIndex(foundIndex);
+    }
+
+    function editConfigByIndex(index) {
+        const settings = configData.settings;
+        
+        if (!Array.isArray(settings) || index < 0 || index >= settings.length) {
+            showModal('Error', 'Invalid configuration index.');
+            return;
+        }
+        
+        const config = settings[index];
+        let author = 'Unknown Author';
+        
+        if (config && typeof config === 'object') {
+            author = config.author || (config.dynamic_values && config.dynamic_values.author) || 'Unknown';
+        }
+        
         isEditMode = true;
         editingAuthor = author;
+        window._editingIndex = index;
         
         document.getElementById('dashboardView').style.display = 'none';
         document.getElementById('detailView').classList.remove('active');
@@ -2570,17 +2638,27 @@
         document.getElementById('editModeBanner').classList.add('visible');
         
         // Load the config data
-        loadConfigForEdit(author);
+        if (config && config.dynamic_values) {
+            loadDynamicValues(config.dynamic_values);
+        }
+        
+        loadAccounts();
+        loadCaptions();
+        loadTimeOrders();
+        loadFilters();
+        loadCaptionAuthors();
         renderDynamicFields();
     }
     
     function cancelEditMode() {
+        window._editingIndex = null;
         showDashboard();
     }
     
     function clearEditMode() {
         isEditMode = false;
         editingAuthor = '';
+        window._editingIndex = null;
         document.getElementById('settingsTabTitle').textContent = 'Set Configuration';
         document.getElementById('editModeBanner').classList.remove('visible');
     }
@@ -2589,6 +2667,7 @@
         loadAccounts();
         loadCaptions();
         loadTimeOrders();
+        loadFilters();
         loadCaptionAuthors();
         loadDynamicFields();
     }
@@ -2625,7 +2704,7 @@
             loadAccounts();
             loadCaptions();
             loadTimeOrders();
-            loadCountries();
+            loadFilters();
             loadCaptionAuthors();
         } else {
             // If config not found, create a temporary one with the author from dynamic_values
@@ -2677,14 +2756,14 @@
             
             const statusColor = {
                 'pending': '#f6ad55',
-                'successful': '#48bb78',
+                'completed': '#48bb78',
                 'aborted': '#fc8181',
                 'incomplete': '#a0aec0'
             };
             
             const statusLabel = {
                 'pending': 'Pending',
-                'successful': 'Successful',
+                'completed': 'completed',
                 'aborted': 'Aborted',
                 'incomplete': 'Incomplete'
             };
@@ -2702,6 +2781,30 @@
                 const firstKey = Object.keys(config.dynamic_values || {})[0];
                 if (firstKey) {
                     author = firstKey;
+                }
+            }
+            
+            // Find the actual index in the full settings array
+            const fullSettings = configData.settings;
+            let actualIndex = -1;
+            if (Array.isArray(fullSettings)) {
+                for (let i = 0; i < fullSettings.length; i++) {
+                    let configAuthor = fullSettings[i].author || (fullSettings[i].dynamic_values && fullSettings[i].dynamic_values.author);
+                    if (configAuthor === author) {
+                        actualIndex = i;
+                        break;
+                    }
+                }
+            }
+            
+            // If we can't find by author, try to match by content
+            if (actualIndex === -1 && Array.isArray(fullSettings)) {
+                const configStr = JSON.stringify(config);
+                for (let i = 0; i < fullSettings.length; i++) {
+                    if (JSON.stringify(fullSettings[i]) === configStr) {
+                        actualIndex = i;
+                        break;
+                    }
                 }
             }
             
@@ -2736,8 +2839,9 @@
                 `;
             }
             
-            // Use author for edit/delete functions - if no author, use first dynamic value
+            // Use author for edit/delete functions
             const authorParam = author;
+            const indexParam = actualIndex !== -1 ? actualIndex : index;
             
             div.innerHTML = `
                 <div class="item-header">
@@ -2749,11 +2853,10 @@
                     ${operationStatusHtml}
                 </div>
                 <div class="item-actions">
-                    <button class="btn btn-edit-config" onclick="showEditConfig('${authorParam}')">Edit</button>
-                    <button class="btn btn-delete" onclick="deleteConfig('${authorParam}')">Delete</button>
-                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'successful')">Mark Successful</button>
+                    <button class="btn btn-edit-config" onclick="showEditConfig('${authorParam}', ${indexParam})">Edit</button>
+                    <button class="btn btn-delete" onclick="deleteConfig('${authorParam}', ${indexParam})">Delete</button>
+                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'completed')">Mark Completed</button>
                     <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'aborted')">Mark Aborted</button>
-                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'incomplete')">Mark Incomplete</button>
                     <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'pending')">Mark Pending</button>
                 </div>
             `;
@@ -2762,23 +2865,92 @@
         });
     }
     
-    // ===== CONFIG OPERATIONS =====
-    function deleteConfig(author) {
+    // ===== CONFIG OPERATIONS - UPDATED DELETE FUNCTIONS =====
+    function deleteConfig(author, index) {
+        // If index is provided, use it directly
+        if (index !== undefined && index !== null) {
+            showModal('Confirm Delete', 'Are you sure you want to delete configuration #' + (index + 1) + '?', function() {
+                deleteConfigFromDB(index);
+            });
+            return;
+        }
+        
+        // Fallback: try to find by author (for backward compatibility)
+        const settings = configData.settings;
+        let foundIndex = -1;
+        
+        if (Array.isArray(settings)) {
+            for (let i = 0; i < settings.length; i++) {
+                if (settings[i] && typeof settings[i] === 'object') {
+                    let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
+                    if (configAuthor === author) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (foundIndex === -1) {
+            showModal('Error', 'Configuration not found for author: ' + author);
+            return;
+        }
+        
         showModal('Confirm Delete', 'Are you sure you want to delete configuration for "' + author + '"?', function() {
-            deleteConfigFromDB(author);
+            deleteConfigFromDB(foundIndex);
         });
     }
-    
-    function deleteConfigFromDB(author) {
+
+    function deleteConfigFromDB(index) {
         if (!configId) {
             showModal('Error', 'No configuration found to delete.');
             return;
         }
         
+        // Get the settings array
+        let settings = configData.settings;
+        
+        if (!Array.isArray(settings) || settings.length === 0) {
+            showModal('Error', 'No configurations to delete.');
+            return;
+        }
+        
+        // Check if the index is valid
+        if (index < 0 || index >= settings.length) {
+            showModal('Error', 'Invalid configuration index.');
+            return;
+        }
+        
+        // Get the author for the confirmation message (if available)
+        let authorName = 'Unknown';
+        if (settings[index] && typeof settings[index] === 'object') {
+            authorName = settings[index].author || (settings[index].dynamic_values && settings[index].dynamic_values.author) || 'Unknown';
+        }
+        
+        // Remove the entry at the specified index
+        settings.splice(index, 1);
+        
+        // Update configData
+        configData.settings = settings;
+        
+        // Save to database
+        const postData = {
+            settings: configData.settings,
+            accounts: configData.accounts || {},
+            captions: configData.captions || [],
+            timeorders: configData.timeorders || {},
+            filters: configData.filters || [],
+            dynamic_fields: configData.dynamic_fields || {}
+        };
+        
         const formData = new FormData();
-        formData.append('delete_config', 'true');
-        formData.append('id', configId);
-        formData.append('author', author);
+        formData.append('save_all', 'true');
+        formData.append('settings', JSON.stringify(postData.settings));
+        formData.append('accounts', JSON.stringify(postData.accounts));
+        formData.append('captions', JSON.stringify(postData.captions));
+        formData.append('timeorders', JSON.stringify(postData.timeorders));
+        formData.append('filters', JSON.stringify(postData.filters));
+        formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
         
         fetch(window.location.href, {
             method: 'POST',
@@ -2787,22 +2959,73 @@
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                window.location.reload();
+                showModal('Success', 'Configuration "' + authorName + '" deleted successfully! Refreshing...');
+                setTimeout(() => window.location.reload(), 1500);
             } else {
                 showModal('Error', data.message);
             }
         })
         .catch(error => {
-            showModal('Error', 'Error: ' + error.message);
+            console.error('Error:', error);
+            showModal('Error', 'Error deleting configuration: ' + error.message);
         });
     }
-    
-    function changeStatus(author, status) {
+        
+    function changeStatus(author, status, index) {
         if (!configId) {
             showModal('Error', 'No configuration found.');
             return;
         }
         
+        // If index is provided, use it to update the config directly
+        if (index !== undefined && index !== null) {
+            const settings = configData.settings;
+            if (Array.isArray(settings) && index >= 0 && index < settings.length) {
+                const config = settings[index];
+                if (config && typeof config === 'object') {
+                    config.status = status;
+                    config.operation_status = "change_status: Status updated to '" + status + "'";
+                    
+                    // Save all data
+                    const postData = {
+                        settings: configData.settings,
+                        accounts: configData.accounts || {},
+                        captions: configData.captions || [],
+                        timeorders: configData.timeorders || {},
+                        filters: configData.filters || [],
+                        dynamic_fields: configData.dynamic_fields || {}
+                    };
+                    
+                    const formData = new FormData();
+                    formData.append('save_all', 'true');
+                    formData.append('settings', JSON.stringify(postData.settings));
+                    formData.append('accounts', JSON.stringify(postData.accounts));
+                    formData.append('captions', JSON.stringify(postData.captions));
+                    formData.append('timeorders', JSON.stringify(postData.timeorders));
+                    formData.append('filters', JSON.stringify(postData.filters));
+                    formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
+                    
+                    fetch(window.location.href, {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            window.location.reload();
+                        } else {
+                            showModal('Error', data.message);
+                        }
+                    })
+                    .catch(error => {
+                        showModal('Error', 'Error: ' + error.message);
+                    });
+                    return;
+                }
+            }
+        }
+        
+        // Fallback: use the old method with author
         const formData = new FormData();
         formData.append('update_status', 'true');
         formData.append('id', configId);
@@ -2895,12 +3118,11 @@
         }
     }
     
-    // ===== LOAD ALL DATA =====
     function loadAllData() {
         loadAccounts();
         loadCaptions();
         loadTimeOrders();
-        loadCountries();
+        loadFilters();
         loadCaptionAuthors();
         loadDynamicFields();
     }
@@ -2947,10 +3169,28 @@
         captions.forEach((authorData, index) => {
             const div = document.createElement('div');
             div.className = 'caption-item';
+            
+            // Display captions as plain text lines without JSON
+            let captionsDisplay = '';
+            if (authorData.captions && authorData.captions.length > 0) {
+                const captionLines = authorData.captions
+                    .map(cap => cap.description)
+                    .slice(0, 3); // Show first 3 captions as preview
+                captionsDisplay = captionLines.join(' | ');
+                if (authorData.captions.length > 3) {
+                    captionsDisplay += ` ... (+${authorData.captions.length - 3} more)`;
+                }
+            } else {
+                captionsDisplay = 'No captions';
+            }
+            
             div.innerHTML = `
                 <div class="caption-content">
                     <span class="caption-author">${authorData.name || 'Unknown Author'}</span>
-                    <span>${authorData.captions ? authorData.captions.length : 0} caption(s)</span>
+                    <span style="font-size:13px; color:#5a7a8a;">${authorData.captions ? authorData.captions.length : 0} caption(s)</span>
+                    <div style="margin-top:5px; font-size:13px; color:#718096; word-break:break-word;">
+                        ${captionsDisplay}
+                    </div>
                 </div>
                 <div>
                     <button class="btn btn-warning" onclick="editCaptions(${index})" style="margin-right:5px;">Edit</button>
@@ -3042,20 +3282,20 @@
         }
     }
     
-    function loadCountries() {
-        const container = document.getElementById('countries_list');
+    function loadFilters() {
+        const container = document.getElementById('filters_list');
         container.innerHTML = '';
         
-        const countries = configData.countries || [];
-        if (countries.length === 0) {
-            container.innerHTML = '<p style="color: #999; font-size: 14px;">No countries added.</p>';
+        const filters = configData.filters || [];
+        if (filters.length === 0) {
+            container.innerHTML = '<p style="color: #999; font-size: 14px;">No filters added.</p>';
             return;
         }
         
-        countries.forEach((country, index) => {
+        filters.forEach((filter, index) => {
             const span = document.createElement('span');
             span.className = 'group-item';
-            span.innerHTML = country + ' <span class="remove-group" onclick="removeCountry(' + index + ')">×</span>';
+            span.innerHTML = filter + ' <span class="remove-group" onclick="removeFilter(' + index + ')">×</span>';
             container.appendChild(span);
         });
     }
@@ -3088,7 +3328,7 @@
             if (sourceType === 'accounts') sourceInfo = ' | Source: Account URLs';
             else if (sourceType === 'captions') sourceInfo = ' | Source: Captions';
             else if (sourceType === 'timeorders') sourceInfo = ' | Source: Time Orders';
-            else if (sourceType === 'countries') sourceInfo = ' | Source: Countries';
+            else if (sourceType === 'filters') sourceInfo = ' | Source: filters';
             else if (sourceType === 'copied_links') sourceInfo = ' | Source: Copied Links (JPGS Vault)';
             
             let submitAsLabel = '';
@@ -3167,7 +3407,7 @@
                     <option value="accounts">Account URLs</option>
                     <option value="captions">Captions</option>
                     <option value="timeorders">Time Orders</option>
-                    <option value="countries">Countries</option>
+                    <option value="filters">Filters</option>
                     <option value="copied_links">Copied Links (JPGS Vault)</option>
                 </select>
                 <small style="color:#999;">Select which data source to populate the dropdown with</small>
@@ -3287,7 +3527,7 @@
                     <option value="accounts" ${field.source_type === 'accounts' ? 'selected' : ''}>Account URLs</option>
                     <option value="captions" ${field.source_type === 'captions' ? 'selected' : ''}>Captions</option>
                     <option value="timeorders" ${field.source_type === 'timeorders' ? 'selected' : ''}>Time Orders</option>
-                    <option value="countries" ${field.source_type === 'countries' ? 'selected' : ''}>Countries</option>
+                    <option value="filters" ${field.source_type === 'filters' ? 'selected' : ''}>filters</option>
                     <option value="copied_links" ${field.source_type === 'copied_links' ? 'selected' : ''}>Copied Links (JPGS Vault)</option>
                 </select>
                 <small style="color:#999;">Select which data source to populate the dropdown with</small>
@@ -3451,13 +3691,13 @@
                     
                     if (submitAs === 'key') {
                         submitData = key;
-                        displayText = key; // Display only the key
+                        displayText = key;
                     } else if (submitAs === 'value') {
                         submitData = url;
-                        displayText = url; // Display only the value (URL)
+                        displayText = url;
                     } else if (submitAs === 'both') {
                         submitData = JSON.stringify({ [key]: url });
-                        displayText = key + ' → ' + url; // Display both key and value
+                        displayText = key + ' → ' + url;
                     }
                     
                     values.push({ 
@@ -3473,7 +3713,6 @@
         } else if (sourceType === 'captions') {
             const captions = configData.captions || [];
             
-            // Group captions by author name
             const authorCaptionMap = {};
             
             captions.forEach(item => {
@@ -3496,20 +3735,19 @@
                 }
             });
             
-            // Now create entries for each unique author
             for (const [authorName, captionsList] of Object.entries(authorCaptionMap)) {
                 let submitData = '';
                 let displayText = '';
                 
                 if (submitAs === 'key') {
                     submitData = authorName;
-                    displayText = authorName; // Display only the author name
+                    displayText = authorName;
                 } else if (submitAs === 'value') {
                     submitData = JSON.stringify(captionsList);
-                    displayText = JSON.stringify(captionsList); // Display the captions JSON
+                    displayText = JSON.stringify(captionsList);
                 } else if (submitAs === 'both') {
                     submitData = JSON.stringify(captionsList);
-                    displayText = authorName + ' (' + captionsList.length + ' captions)'; // Display author + count
+                    displayText = authorName + ' (' + captionsList.length + ' captions)';
                 }
                 
                 values.push({ 
@@ -3532,13 +3770,13 @@
                 
                 if (submitAs === 'key') {
                     submitData = orderName;
-                    displayText = orderName; // Display only the order name
+                    displayText = orderName;
                 } else if (submitAs === 'value') {
                     submitData = JSON.stringify(timesList);
-                    displayText = JSON.stringify(timesList); // Display the times JSON
+                    displayText = JSON.stringify(timesList);
                 } else if (submitAs === 'both') {
                     submitData = JSON.stringify({ [orderName]: timesList });
-                    displayText = orderName + ' (' + (Array.isArray(timesList) ? timesList.length : 0) + ' times)'; // Display order + count
+                    displayText = orderName + ' (' + (Array.isArray(timesList) ? timesList.length : 0) + ' times)';
                 }
                 
                 values.push({ 
@@ -3552,26 +3790,26 @@
                 });
             }
             
-        } else if (sourceType === 'countries') {
-            const countries = configData.countries || [];
-            countries.forEach(country => {
+        } else if (sourceType === 'filters') {
+            const filters = configData.filters || [];
+            filters.forEach(filter => {
                 let submitData = '';
                 let displayText = '';
                 
                 if (submitAs === 'key') {
-                    submitData = country;
-                    displayText = country; // Display only the country name
+                    submitData = filter;
+                    displayText = filter;
                 } else if (submitAs === 'value') {
-                    submitData = country;
-                    displayText = country; // Display only the country name
+                    submitData = filter;
+                    displayText = filter;
                 } else if (submitAs === 'both') {
-                    submitData = JSON.stringify({ [country]: country });
-                    displayText = country; // Display the country name
+                    submitData = JSON.stringify({ [filter]: filter });
+                    displayText = filter;
                 }
                 
                 values.push({ 
-                    key: country, 
-                    value: country,
+                    key: filter, 
+                    value: filter,
                     display: displayText,
                     submitData: submitData,
                     submitAs: submitAs,
@@ -3579,37 +3817,58 @@
                 });
             });
         } else if (sourceType === 'copied_links') {
-            // Special handling for copied links
             const copiedLinks = copiedLinksData || {};
+            
+            // Get the domain from the current page URL
+            const domain = window.location.origin; // e.g., https://yourdomain.com
+            
+            console.log('Total folders from JPGS Vault:', Object.keys(copiedLinks).length);
+            
             for (const [folder, data] of Object.entries(copiedLinks)) {
                 const urlCount = data.count || 0;
                 const urls = data.urls || [];
                 
-                let displayText = '';
+                // Store original URLs for display
+                const originalUrls = urls;
+                
+                // Prepend domain to each URL for submission
+                const urlsWithDomain = urls.map(url => {
+                    // Remove leading slash if exists to avoid double slashes
+                    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+                    return domain + '/' + cleanUrl;
+                });
+                
+                // For display: show folder name with count
+                const displayName = folder + ' (' + urlCount + ' URL' + (urlCount !== 1 ? 's' : '') + ')';
+                
                 let submitData = '';
                 
                 if (submitAs === 'key') {
-                    submitData = `${folder} ${urlCount}`;
-                    displayText = folder; // Display only the folder name
+                    submitData = folder;
                 } else if (submitAs === 'value') {
-                    submitData = JSON.stringify(urls);
-                    displayText = JSON.stringify(urls); // Display the URLs JSON
+                    // Submit the full URLs with domain
+                    submitData = urlsWithDomain.join(', ');
                 } else if (submitAs === 'both') {
-                    submitData = JSON.stringify({ [folder]: urls.join(', ') });
-                    displayText = folder + ' (' + urlCount + ' URLs)'; // Display folder + count
+                    // For both, store as {"folder": "url1, url2, url3"} with domain
+                    submitData = JSON.stringify({ [folder]: urlsWithDomain.join(', ') });
                 }
                 
                 values.push({
                     key: folder,
-                    value: urls,
-                    display: displayText,
+                    value: urlsWithDomain, // Store with domain for value
+                    originalUrls: originalUrls, // Store original for reference
+                    display: displayName,
                     submitData: submitData,
                     submitAs: submitAs,
                     urlCount: urlCount,
-                    urls: urls,
-                    isGrouped: false
+                    urls: urlsWithDomain,
+                    isGrouped: false,
+                    isCopiedLinks: true // Flag to identify this source type
                 });
             }
+            
+            // Sort by URL count (most first)
+            values.sort((a, b) => b.urlCount - a.urlCount);
         }
         return values;
     }
@@ -3910,7 +4169,6 @@
                 emptyOption.textContent = 'Select ' + title + '...';
                 inputElement.appendChild(emptyOption);
                 
-                // Determine which options to use
                 let sourceValues = [];
                 
                 if (sourceType !== 'none') {
@@ -3936,13 +4194,21 @@
                     });
                 }
                 
-                sourceValues.forEach(({ key: optionKey, value: actualValue, display, submitData }) => {
+                sourceValues.forEach(({ key: optionKey, value: actualValue, display, submitData, isCopiedLinks }) => {
                     const option = document.createElement('option');
+                    // For copied links, store the submitData which already has domain
                     option.value = submitData;
                     option.textContent = display;
                     option.dataset.key = optionKey;
                     option.dataset.value = actualValue;
                     option.dataset.submitAs = submitAs;
+                    option.dataset.isCopiedLinks = isCopiedLinks || false;
+                    
+                    // If this is copied links, store the raw URLs without domain for display purposes
+                    if (isCopiedLinks && actualValue) {
+                        option.dataset.rawUrls = JSON.stringify(actualValue);
+                    }
+                    
                     if (value === actualValue || value === submitData) {
                         option.selected = true;
                     }
@@ -3961,6 +4227,7 @@
                 inputElement.addEventListener('change', function() {
                     const selectedOption = this.options[this.selectedIndex];
                     if (selectedOption && selectedOption.value) {
+                        // Display the selected value (which already has domain if copied links)
                         previewDiv.textContent = 'Selected: ' + selectedOption.value;
                     } else {
                         previewDiv.textContent = 'Selected: None';
@@ -3968,7 +4235,6 @@
                 });
                 
                 inputElement = wrapper;
-                
             } else {
                 // input - could be list input or single input
                 if (allowList) {
@@ -4152,25 +4418,25 @@
     }
     
     // ===== COUNTRY FUNCTIONS =====
-    function addCountry() {
-        const input = document.getElementById('country_input');
+    function addFilter() {
+        const input = document.getElementById('filter_input');
         const value = input.value.trim();
         if (value) {
-            if (!configData.countries) configData.countries = [];
-            if (!configData.countries.includes(value)) {
-                configData.countries.push(value);
-                loadCountries();
+            if (!configData.filters) configData.filters = [];
+            if (!configData.filters.includes(value)) {
+                configData.filters.push(value);
+                loadFilters();
                 renderDynamicFields();
                 input.value = '';
             }
         }
     }
     
-    function removeCountry(index) {
-        showModal('Confirm Delete', 'Are you sure you want to remove this country?', function() {
-            if (configData.countries) {
-                configData.countries.splice(index, 1);
-                loadCountries();
+    function removeFilter(index) {
+        showModal('Confirm Delete', 'Are you sure you want to remove this filter?', function() {
+            if (configData.filters) {
+                configData.filters.splice(index, 1);
+                loadFilters();
                 renderDynamicFields();
             }
         });
@@ -4229,24 +4495,101 @@
         document.getElementById('add_caption_form').style.display = 'block';
         loadCaptionAuthors();
     }
-    
+
     function hideAddCaption() {
         document.getElementById('add_caption_form').style.display = 'none';
         document.getElementById('new_caption_text').value = '';
         document.getElementById('caption_author_select').value = '';
     }
-    
+
+    // Parse caption input - supports multiple formats
+    function parseCaptionInput(input) {
+        if (!input || typeof input !== 'string') {
+            return [];
+        }
+        
+        const trimmed = input.trim();
+        
+        // Try to parse as JSON
+        try {
+            const parsed = JSON.parse(trimmed);
+            
+            // Format 2: [{id: number, description: string}, ...]
+            if (Array.isArray(parsed)) {
+                // Check if it's format 2 (objects with id and description)
+                if (parsed.length > 0 && parsed[0].description !== undefined) {
+                    // Format 2 - keep as is
+                    return parsed.map(item => ({
+                        id: item.id || null,
+                        description: item.description || ''
+                    })).filter(item => item.description);
+                }
+                // Format 1: ["caption 1", "caption 2", ...]
+                else if (parsed.length > 0 && typeof parsed[0] === 'string') {
+                    // Format 1 - convert to format 2
+                    return parsed
+                        .filter(item => typeof item === 'string' && item.trim())
+                        .map((item, index) => ({
+                            id: index + 1,
+                            description: item.trim()
+                        }));
+                }
+            }
+        } catch (e) {
+            // Not JSON - treat as single caption or split by newlines/commas
+        }
+        
+        // Not JSON: split by newlines or commas
+        const items = trimmed.split(/\n|,/).filter(item => item.trim());
+        
+        if (items.length === 0) {
+            return [];
+        }
+        
+        // Check if each item looks like a caption object (contains "description" or "id")
+        const maybeObjects = items.map(item => {
+            try {
+                const obj = JSON.parse(item.trim());
+                if (obj && typeof obj === 'object' && obj.description !== undefined) {
+                    return { id: obj.id || null, description: obj.description };
+                }
+            } catch (e) {}
+            return null;
+        });
+        
+        // If all items are valid objects, use them
+        if (maybeObjects.every(item => item !== null)) {
+            return maybeObjects.filter(item => item && item.description);
+        }
+        
+        // Otherwise treat as plain captions
+        return items
+            .filter(item => item.trim())
+            .map((item, index) => ({
+                id: index + 1,
+                description: item.trim()
+            }));
+    }
+
     function addCaption() {
         const author = document.getElementById('caption_author_select').value;
-        const text = document.getElementById('new_caption_text').value.trim();
+        const inputText = document.getElementById('new_caption_text').value.trim();
         
         if (!author) {
             showModal('Error', 'Please select an author.');
             return;
         }
         
-        if (!text) {
-            showModal('Error', 'Please enter caption text.');
+        if (!inputText) {
+            showModal('Error', 'Please enter caption text or JSON.');
+            return;
+        }
+        
+        // Parse the input into captions array
+        const newCaptions = parseCaptionInput(inputText);
+        
+        if (newCaptions.length === 0) {
+            showModal('Error', 'No valid captions found. Please enter text, JSON array, or caption objects.');
             return;
         }
         
@@ -4265,39 +4608,49 @@
             authorIndex = configData.captions.length - 1;
         }
         
-        const newCaption = {
-            id: configData.captions[authorIndex].captions.length + 1,
-            description: text
-        };
+        // Get existing captions count for ID assignment
+        const existingCount = configData.captions[authorIndex].captions.length;
         
-        configData.captions[authorIndex].captions.push(newCaption);
+        // Add new captions with proper IDs
+        newCaptions.forEach((caption, index) => {
+            const newCaption = {
+                id: existingCount + index + 1,
+                description: caption.description
+            };
+            configData.captions[authorIndex].captions.push(newCaption);
+        });
         
         loadCaptions();
         renderDynamicFields();
         hideAddCaption();
-        showModal('Success', 'Caption added successfully!');
+        showModal('Success', `${newCaptions.length} caption(s) added successfully for ${author}!`);
     }
-    
+
     function editCaptions(index) {
         const authorData = configData.captions[index];
         if (!authorData) return;
         
-        let html = '<h3 style="margin-bottom:10px; color:#333;">Edit ' + authorData.name + ' - Captions</h3>';
-        
+        // Display captions as plain sentences without JSON structure
+        let captionsText = '';
         if (authorData.captions && authorData.captions.length > 0) {
-            authorData.captions.forEach((cap, capIndex) => {
-                html += `
-                    <div class="caption-entry" style="margin-bottom:15px;">
-                        <div style="margin-bottom:5px;"><strong>#${cap.id}</strong></div>
-                        <textarea id="edit_caption_${capIndex}" rows="3" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; resize:vertical;">${cap.description || ''}</textarea>
-                    </div>
-                `;
-            });
-        } else {
-            html += '<p style="color: #999;">No captions found for this author.</p>';
+            captionsText = authorData.captions
+                .map(cap => cap.description)
+                .join('\n');
         }
         
-        html += `
+        let html = `
+            <h3 style="margin-bottom:10px; color:#333;">Edit ${authorData.name} - Captions</h3>
+            <div style="margin-bottom:10px; color:#718096; font-size:13px;">
+                <p>Enter captions in any format:</p>
+                <ul style="margin-top:5px; padding-left:20px;">
+                    <li><strong>Simple:</strong> One caption per line</li>
+                    <li><strong>JSON Array:</strong> ["caption 1", "caption 2"]</li>
+                    <li><strong>Object Array:</strong> [{"id":1,"description":"caption"}]</li>
+                </ul>
+            </div>
+            <div class="form-group">
+                <textarea id="edit_captions_textarea" rows="8" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; resize:vertical; font-family:monospace;">${captionsText}</textarea>
+            </div>
             <div style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap;">
                 <button class="btn btn-success" onclick="saveEditedCaptions(${index})">Save Changes</button>
                 <button class="btn btn-danger" onclick="deleteCaptionFromAuthor(${index})">Delete All Captions</button>
@@ -4308,26 +4661,36 @@
         showModal('Edit Captions', '', null, html);
         window._editingCaptionIndex = index;
     }
-    
+
     function saveEditedCaptions(index) {
         const authorData = configData.captions[index];
         if (!authorData) return;
         
-        if (authorData.captions) {
-            authorData.captions.forEach((cap, capIndex) => {
-                const textarea = document.getElementById('edit_caption_' + capIndex);
-                if (textarea) {
-                    cap.description = textarea.value;
-                }
-            });
+        const textarea = document.getElementById('edit_captions_textarea');
+        if (!textarea) return;
+        
+        const inputText = textarea.value.trim();
+        
+        // Parse the input
+        const newCaptions = parseCaptionInput(inputText);
+        
+        if (newCaptions.length === 0) {
+            showModal('Error', 'No valid captions found. Please enter text, JSON array, or caption objects.');
+            return;
         }
+        
+        // Replace all captions with the new ones
+        authorData.captions = newCaptions.map((caption, index) => ({
+            id: index + 1,
+            description: caption.description
+        }));
         
         loadCaptions();
         renderDynamicFields();
         closeModal();
-        showModal('Success', 'Captions updated successfully!');
+        showModal('Success', `${authorData.captions.length} caption(s) updated successfully!`);
     }
-    
+
     function deleteCaptionFromAuthor(index) {
         showModal('Confirm Delete', 'Are you sure you want to delete all captions for this author?', function() {
             if (configData.captions && configData.captions[index]) {
@@ -4339,16 +4702,16 @@
             }
         });
     }
-    
-    function deleteCaptionAuthor(index) {
-        showModal('Confirm Delete', 'Are you sure you want to delete this author and all their captions?', function() {
-            if (configData.captions) {
-                configData.captions.splice(index, 1);
-                loadCaptions();
-                renderDynamicFields();
-            }
-        });
-    }
+
+function deleteCaptionAuthor(index) {
+    showModal('Confirm Delete', 'Are you sure you want to delete this author and all their captions?', function() {
+        if (configData.captions) {
+            configData.captions.splice(index, 1);
+            loadCaptions();
+            renderDynamicFields();
+        }
+    });
+}
     
     // ===== TIME ORDER FUNCTIONS =====
     function showAddTimeOrder() {
@@ -4600,16 +4963,19 @@
         });
     }
     
-    // ===== SAVE CONFIGURATION =====
     function saveConfig() {
         // Get dynamic values from rendered fields
         const dynamicValues = {};
         const fieldKeys = Object.keys(configData.dynamic_fields || {});
         
+        // Get the domain for URL construction
+        const domain = window.location.origin;
+        
         for (const key of fieldKeys) {
             const field = configData.dynamic_fields[key];
             const elementType = field.element_type || 'input';
             const allowList = field.allow_list || false;
+            const sourceType = field.source_type || 'none';
             
             if (elementType === 'date-time-input') {
                 const dateInput = document.getElementById('dynamic_field_' + key + '_date');
@@ -4645,7 +5011,6 @@
                     }
                     
                     if (date || timeStr) {
-                        // Format date as dd/mm/yyyy
                         let formattedDate = '';
                         if (date) {
                             const parts = date.split('-');
@@ -4657,7 +5022,6 @@
                     }
                 }
             } else if (elementType === 'input' && allowList) {
-                // List input - get all values from the list
                 const listContainer = document.getElementById('dynamic_field_' + key + '_list');
                 if (listContainer) {
                     const values = [];
@@ -4669,23 +5033,51 @@
                     dynamicValues[key] = values.join(', ');
                 }
             } else if (elementType === 'select') {
-                // For select, get the select element directly by ID
                 const select = document.getElementById('dynamic_field_' + key);
+                let selectedValue = '';
+                let isCopiedLinks = false;
+                
                 if (select) {
-                    // The value is already the submit data from the option
-                    dynamicValues[key] = select.value;
+                    const selectedOption = select.options[select.selectedIndex];
+                    if (selectedOption) {
+                        selectedValue = selectedOption.value;
+                        isCopiedLinks = selectedOption.dataset.isCopiedLinks === 'true';
+                        
+                        // For copied links, the value already has domain from getSourceValues
+                        // But we need to ensure it's properly formatted
+                        if (isCopiedLinks && sourceType === 'copied_links') {
+                            // The value already has domain prepended, so we keep it as is
+                            // But if it's a JSON string, we need to parse and reconstruct
+                            try {
+                                const parsed = JSON.parse(selectedValue);
+                                if (typeof parsed === 'object' && parsed !== null) {
+                                    // It's already in the correct format with domain
+                                    // Keep it as is
+                                    dynamicValues[key] = selectedValue;
+                                } else {
+                                    dynamicValues[key] = selectedValue;
+                                }
+                            } catch (e) {
+                                // Not JSON, keep as is
+                                dynamicValues[key] = selectedValue;
+                            }
+                        } else {
+                            dynamicValues[key] = selectedValue;
+                        }
+                    }
                 } else {
-                    // Try to find select inside wrapper
                     const wrapper = document.getElementById('dynamic_field_' + key);
                     if (wrapper && wrapper.querySelector) {
                         const selectEl = wrapper.querySelector('select');
                         if (selectEl) {
-                            dynamicValues[key] = selectEl.value;
+                            const selectedOption = selectEl.options[selectEl.selectedIndex];
+                            if (selectedOption) {
+                                dynamicValues[key] = selectedOption.value;
+                            }
                         }
                     }
                 }
             } else {
-                // For text inputs, textareas, etc.
                 const input = document.getElementById('dynamic_field_' + key);
                 if (input) {
                     dynamicValues[key] = input.value;
@@ -4693,11 +5085,9 @@
             }
         }
         
-        // Use the first dynamic field value as author, or default
         const firstKey = Object.keys(dynamicValues)[0] || 'default';
         const author = dynamicValues[firstKey] || 'default';
         
-        // Build settings object with dynamic values
         const settingsObj = {
             author: author,
             dynamic_values: dynamicValues,
@@ -4705,16 +5095,31 @@
             operation_status: ''
         };
         
-        // Check if author already exists
         let existingSettings = configData.settings;
         let found = false;
         
         if (Array.isArray(existingSettings)) {
-            if (isEditMode && editingAuthor) {
+            if (isEditMode && window._editingIndex !== undefined && window._editingIndex !== null) {
+                const idx = window._editingIndex;
+                if (idx >= 0 && idx < existingSettings.length) {
+                    if (existingSettings[idx] && existingSettings[idx].status) {
+                        settingsObj.status = existingSettings[idx].status;
+                    }
+                    if (existingSettings[idx] && existingSettings[idx].operation_status) {
+                        settingsObj.operation_status = existingSettings[idx].operation_status;
+                    }
+                    existingSettings[idx] = settingsObj;
+                    found = true;
+                }
+            } else if (isEditMode && editingAuthor) {
                 for (let i = 0; i < existingSettings.length; i++) {
                     if (existingSettings[i] && existingSettings[i].author === editingAuthor) {
-                        settingsObj.status = existingSettings[i].status || 'pending';
-                        settingsObj.operation_status = existingSettings[i].operation_status || '';
+                        if (existingSettings[i] && existingSettings[i].status) {
+                            settingsObj.status = existingSettings[i].status;
+                        }
+                        if (existingSettings[i] && existingSettings[i].operation_status) {
+                            settingsObj.operation_status = existingSettings[i].operation_status;
+                        }
                         existingSettings[i] = settingsObj;
                         found = true;
                         break;
@@ -4741,13 +5146,12 @@
         
         configData.settings = existingSettings;
         
-        // Save all data including dynamic fields
         const postData = {
             settings: configData.settings,
             accounts: configData.accounts || {},
             captions: configData.captions || [],
             timeorders: configData.timeorders || {},
-            countries: configData.countries || [],
+            filters: configData.filters || [],
             dynamic_fields: configData.dynamic_fields || {}
         };
         
@@ -4762,7 +5166,7 @@
         formData.append('accounts', JSON.stringify(postData.accounts));
         formData.append('captions', JSON.stringify(postData.captions));
         formData.append('timeorders', JSON.stringify(postData.timeorders));
-        formData.append('countries', JSON.stringify(postData.countries));
+        formData.append('filters', JSON.stringify(postData.filters));
         formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
         
         fetch(window.location.href, {
@@ -4795,7 +5199,7 @@
             accounts: configData.accounts || {},
             captions: configData.captions || [],
             timeorders: configData.timeorders || {},
-            countries: configData.countries || [],
+            filters: configData.filters || [],
             dynamic_fields: configData.dynamic_fields || {}
         };
         
@@ -4810,7 +5214,7 @@
         formData.append('accounts', JSON.stringify(postData.accounts));
         formData.append('captions', JSON.stringify(postData.captions));
         formData.append('timeorders', JSON.stringify(postData.timeorders));
-        formData.append('countries', JSON.stringify(postData.countries));
+        formData.append('filters', JSON.stringify(postData.filters));
         formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
         
         fetch(window.location.href, {
