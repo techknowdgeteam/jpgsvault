@@ -109,6 +109,22 @@
             return [];
         }
     }
+    // Add this function near the top with other helper functions
+    function cleanDynamicValues($settings) {
+        if (!is_array($settings)) {
+            return $settings;
+        }
+        
+        foreach ($settings as &$config) {
+            if (is_array($config) && isset($config['dynamic_values']) && is_array($config['dynamic_values'])) {
+                // Remove status and operation_status from dynamic_values
+                unset($config['dynamic_values']['status']);
+                unset($config['dynamic_values']['operation_status']);
+            }
+        }
+        
+        return $settings;
+    }
 
     // Handle Save All - Saves to respective columns
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
@@ -120,6 +136,7 @@
             $timeordersData = isset($_POST['timeorders']) ? json_decode($_POST['timeorders'], true) : [];
             $filtersData = isset($_POST['filters']) ? json_decode($_POST['filters'], true) : [];
             $dynamicFieldsData = isset($_POST['dynamic_fields']) ? json_decode($_POST['dynamic_fields'], true) : [];
+            $settingsData = cleanDynamicValues($settingsData);
             
             // Ensure data is properly formatted
             if (!is_array($settingsData)) $settingsData = [];
@@ -504,18 +521,21 @@
         }
     }
 
-    // Group configurations by status
+    // ===== GROUP CONFIGURATIONS BY STATUS (using root-level status) =====
     $grouped_configs = [
         'pending' => [],
         'completed' => [],
         'aborted' => []
     ];
 
-    foreach ($configurations as $config) {
+    foreach ($configurations as $index => $config) {
+        // Get status from root level, NOT from dynamic_values
         $status = isset($config['status']) ? strtolower($config['status']) : 'pending';
         if (!isset($grouped_configs[$status])) {
             $grouped_configs[$status] = [];
         }
+        // Store the index with the config for later reference
+        $config['_index'] = $index;
         $grouped_configs[$status][] = $config;
     }
 
@@ -2570,37 +2590,6 @@
         loadSetupData();
     }
     
-    function showEditConfig(author, index) {
-        // If index is provided, use it
-        if (index !== undefined && index !== null) {
-            editConfigByIndex(index);
-            return;
-        }
-        
-        // Fallback: try to find by author (for backward compatibility)
-        const settings = configData.settings;
-        let foundIndex = -1;
-        
-        if (Array.isArray(settings)) {
-            for (let i = 0; i < settings.length; i++) {
-                if (settings[i] && typeof settings[i] === 'object') {
-                    let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
-                    if (configAuthor === author) {
-                        foundIndex = i;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        if (foundIndex === -1) {
-            showModal('Error', 'Configuration not found for author: ' + author);
-            return;
-        }
-        
-        editConfigByIndex(foundIndex);
-    }
-
     function editConfigByIndex(index) {
         const settings = configData.settings;
         
@@ -2724,12 +2713,16 @@
         
         if (!settings || !Array.isArray(settings)) return configs;
         
-        settings.forEach(config => {
+        settings.forEach((config, index) => {
             if (config && typeof config === 'object') {
-                // Don't require author - display any config with or without author
+                // Get status from root level
                 const configStatus = (config.status || 'pending').toLowerCase();
                 if (configStatus === status) {
-                    configs.push(config);
+                    // Store the index with the config
+                    configs.push({
+                        ...config,
+                        _index: index
+                    });
                 }
             }
         });
@@ -2750,9 +2743,29 @@
             return;
         }
         
-        configs.forEach((config, index) => {
+        configs.forEach((config) => {
             const div = document.createElement('div');
             div.className = 'config-item';
+            
+            // Use the stored index or find it
+            let actualIndex = config._index;
+            if (actualIndex === undefined || actualIndex === null) {
+                // Fallback: find by matching
+                const fullSettings = configData.settings;
+                if (Array.isArray(fullSettings)) {
+                    const cleanConfig = {...config};
+                    delete cleanConfig._index;
+                    for (let i = 0; i < fullSettings.length; i++) {
+                        if (JSON.stringify(fullSettings[i]) === JSON.stringify(cleanConfig)) {
+                            actualIndex = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Get status from root level
+            const status = (config.status || 'pending').toLowerCase();
             
             const statusColor = {
                 'pending': '#f6ad55',
@@ -2763,58 +2776,34 @@
             
             const statusLabel = {
                 'pending': 'Pending',
-                'completed': 'completed',
+                'completed': 'Completed',
                 'aborted': 'Aborted',
                 'incomplete': 'Incomplete'
             };
             
-            const status = (config.status || 'pending').toLowerCase();
-            
-            // Get author from dynamic_values or use a fallback
+            // Get author
             let author = 'Unknown Author';
             if (config.dynamic_values && config.dynamic_values.author) {
                 author = config.dynamic_values.author;
             } else if (config.author) {
                 author = config.author;
-            } else {
-                // Use the first dynamic value or a generic name
-                const firstKey = Object.keys(config.dynamic_values || {})[0];
-                if (firstKey) {
-                    author = firstKey;
-                }
+            } else if (config.dynamic_values) {
+                const firstKey = Object.keys(config.dynamic_values)[0];
+                if (firstKey) author = firstKey;
             }
             
-            // Find the actual index in the full settings array
-            const fullSettings = configData.settings;
-            let actualIndex = -1;
-            if (Array.isArray(fullSettings)) {
-                for (let i = 0; i < fullSettings.length; i++) {
-                    let configAuthor = fullSettings[i].author || (fullSettings[i].dynamic_values && fullSettings[i].dynamic_values.author);
-                    if (configAuthor === author) {
-                        actualIndex = i;
-                        break;
-                    }
-                }
-            }
-            
-            // If we can't find by author, try to match by content
-            if (actualIndex === -1 && Array.isArray(fullSettings)) {
-                const configStr = JSON.stringify(config);
-                for (let i = 0; i < fullSettings.length; i++) {
-                    if (JSON.stringify(fullSettings[i]) === configStr) {
-                        actualIndex = i;
-                        break;
-                    }
-                }
-            }
-            
-            // Build dynamic fields display
+            // Build dynamic fields display - EXCLUDE status and operation_status
             let dynamicFieldsHtml = '';
             if (config.dynamic_values && typeof config.dynamic_values === 'object') {
                 const entries = Object.entries(config.dynamic_values);
-                if (entries.length > 0) {
+                // Filter out status and operation_status from dynamic_values
+                const filteredEntries = entries.filter(([key]) => 
+                    key !== 'status' && key !== 'operation_status'
+                );
+                
+                if (filteredEntries.length > 0) {
                     dynamicFieldsHtml = '<div><div class="detail-label">Dynamic Fields</div>';
-                    entries.forEach(([key, value]) => {
+                    filteredEntries.forEach(([key, value]) => {
                         let displayValue = value;
                         if (typeof value === 'object' && value !== null) {
                             displayValue = JSON.stringify(value);
@@ -2825,7 +2814,7 @@
                 }
             }
             
-            // Add operation status if present
+            // Add operation status from root level
             let operationStatusHtml = '';
             if (config.operation_status) {
                 const statusClass = config.operation_status.toLowerCase();
@@ -2839,9 +2828,8 @@
                 `;
             }
             
-            // Use author for edit/delete functions
-            const authorParam = author;
-            const indexParam = actualIndex !== -1 ? actualIndex : index;
+            // Use actualIndex for all operations
+            const indexParam = actualIndex !== undefined && actualIndex !== null ? actualIndex : -1;
             
             div.innerHTML = `
                 <div class="item-header">
@@ -2853,11 +2841,11 @@
                     ${operationStatusHtml}
                 </div>
                 <div class="item-actions">
-                    <button class="btn btn-edit-config" onclick="showEditConfig('${authorParam}', ${indexParam})">Edit</button>
-                    <button class="btn btn-delete" onclick="deleteConfig('${authorParam}', ${indexParam})">Delete</button>
-                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'completed')">Mark Completed</button>
-                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'aborted')">Mark Aborted</button>
-                    <button class="btn btn-status" onclick="changeStatus('${authorParam}', 'pending')">Mark Pending</button>
+                    <button class="btn btn-edit-config" onclick="showEditConfigByIndex(${indexParam})">Edit</button>
+                    <button class="btn btn-delete" onclick="deleteConfigByIndex(${indexParam})">Delete</button>
+                    <button class="btn btn-status" onclick="changeStatusByIndex(${indexParam}, 'completed')">Mark Completed</button>
+                    <button class="btn btn-status" onclick="changeStatusByIndex(${indexParam}, 'aborted')">Mark Aborted</button>
+                    <button class="btn btn-status" onclick="changeStatusByIndex(${indexParam}, 'pending')">Mark Pending</button>
                 </div>
             `;
             
@@ -2866,22 +2854,81 @@
     }
     
     // ===== CONFIG OPERATIONS - UPDATED DELETE FUNCTIONS =====
-    function deleteConfig(author, index) {
-        // If index is provided, use it directly
-        if (index !== undefined && index !== null) {
-            showModal('Confirm Delete', 'Are you sure you want to delete configuration #' + (index + 1) + '?', function() {
-                deleteConfigFromDB(index);
-            });
+    // ===== NEW INDEX-BASED DELETE =====
+    function deleteConfigByIndex(index) {
+        if (index === undefined || index === null || index === -1) {
+            showModal('Error', 'Invalid configuration index.');
             return;
         }
         
-        // Fallback: try to find by author (for backward compatibility)
         const settings = configData.settings;
-        let foundIndex = -1;
+        if (!Array.isArray(settings) || index < 0 || index >= settings.length) {
+            showModal('Error', 'Configuration not found.');
+            return;
+        }
         
-        if (Array.isArray(settings)) {
-            for (let i = 0; i < settings.length; i++) {
-                if (settings[i] && typeof settings[i] === 'object') {
+        const config = settings[index];
+        let authorName = 'Unknown';
+        if (config && typeof config === 'object') {
+            authorName = config.author || (config.dynamic_values && config.dynamic_values.author) || 'Unknown';
+        }
+        
+        showModal('Confirm Delete', 'Are you sure you want to delete configuration "' + authorName + '"?', function() {
+            // Remove the entry at the specified index
+            settings.splice(index, 1);
+            
+            // Update configData
+            configData.settings = settings;
+            
+            // Save to database
+            const postData = {
+                settings: configData.settings,
+                accounts: configData.accounts || {},
+                captions: configData.captions || [],
+                timeorders: configData.timeorders || {},
+                filters: configData.filters || [],
+                dynamic_fields: configData.dynamic_fields || {}
+            };
+            
+            const formData = new FormData();
+            formData.append('save_all', 'true');
+            formData.append('settings', JSON.stringify(postData.settings));
+            formData.append('accounts', JSON.stringify(postData.accounts));
+            formData.append('captions', JSON.stringify(postData.captions));
+            formData.append('timeorders', JSON.stringify(postData.timeorders));
+            formData.append('filters', JSON.stringify(postData.filters));
+            formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
+            
+            fetch(window.location.href, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showModal('Success', 'Configuration deleted successfully! Refreshing...');
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showModal('Error', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showModal('Error', 'Error deleting configuration: ' + error.message);
+            });
+        });
+    }
+
+    // Keep old function for backward compatibility
+    function deleteConfig(author, index) {
+        if (index !== undefined && index !== null) {
+            deleteConfigByIndex(index);
+        } else {
+            // Try to find by author
+            const settings = configData.settings;
+            let foundIndex = -1;
+            if (Array.isArray(settings)) {
+                for (let i = 0; i < settings.length; i++) {
                     let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
                     if (configAuthor === author) {
                         foundIndex = i;
@@ -2889,16 +2936,90 @@
                     }
                 }
             }
+            if (foundIndex !== -1) {
+                deleteConfigByIndex(foundIndex);
+            } else {
+                showModal('Error', 'Configuration not found for author: ' + author);
+            }
         }
-        
-        if (foundIndex === -1) {
-            showModal('Error', 'Configuration not found for author: ' + author);
+    }
+    // ===== NEW INDEX-BASED EDIT =====
+    function showEditConfigByIndex(index) {
+        if (index === undefined || index === null || index === -1) {
+            showModal('Error', 'Invalid configuration index.');
             return;
         }
         
-        showModal('Confirm Delete', 'Are you sure you want to delete configuration for "' + author + '"?', function() {
-            deleteConfigFromDB(foundIndex);
-        });
+        const settings = configData.settings;
+        if (!Array.isArray(settings) || index < 0 || index >= settings.length) {
+            showModal('Error', 'Configuration not found.');
+            return;
+        }
+        
+        const config = settings[index];
+        let author = 'Unknown Author';
+        
+        if (config && typeof config === 'object') {
+            author = config.author || (config.dynamic_values && config.dynamic_values.author) || 'Unknown';
+        }
+        
+        isEditMode = true;
+        editingAuthor = author;
+        window._editingIndex = index;
+        
+        document.getElementById('dashboardView').style.display = 'none';
+        document.getElementById('detailView').classList.remove('active');
+        document.getElementById('detailView').style.display = 'none';
+        document.getElementById('setupView').classList.remove('active');
+        document.getElementById('setupView').style.display = 'none';
+        document.getElementById('addConfigView').classList.add('active');
+        document.getElementById('addConfigView').style.display = 'block';
+        document.getElementById('configTabs').classList.remove('visible');
+        document.getElementById('saveBtnContainer').classList.add('visible');
+        document.getElementById('saveConfigBtn').style.display = 'block';
+        document.getElementById('saveSetupBtn').style.display = 'none';
+        document.getElementById('backToDashboardBtn').style.display = 'block';
+        document.getElementById('editAuthorNameDisplay').textContent = author;
+        document.getElementById('settingsTabTitle').textContent = 'Edit Configuration - ' + author;
+        document.getElementById('scrollBody').classList.remove('tabs-visible');
+        document.getElementById('editModeBanner').classList.add('visible');
+        
+        // Load the config data
+        if (config && config.dynamic_values) {
+            loadDynamicValues(config.dynamic_values);
+        }
+        
+        loadAccounts();
+        loadCaptions();
+        loadTimeOrders();
+        loadFilters();
+        loadCaptionAuthors();
+        renderDynamicFields();
+    }
+
+    // Keep old function for backward compatibility
+    function showEditConfig(author, index) {
+        if (index !== undefined && index !== null) {
+            showEditConfigByIndex(index);
+        } else {
+            // Try to find by author
+            const settings = configData.settings;
+            let foundIndex = -1;
+            if (Array.isArray(settings)) {
+                for (let i = 0; i < settings.length; i++) {
+                    let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
+                    if (configAuthor === author) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (foundIndex !== -1) {
+                showEditConfigByIndex(foundIndex);
+            } else {
+                showModal('Error', 'Configuration not found for author: ' + author);
+            }
+        }
     }
 
     function deleteConfigFromDB(index) {
@@ -2971,66 +3092,61 @@
         });
     }
         
-    function changeStatus(author, status, index) {
+    // ===== INDEX-BASED STATUS CHANGE (USE THIS ONLY) =====
+    function changeStatusByIndex(index, status) {
+        if (index === undefined || index === null || index === -1) {
+            showModal('Error', 'Invalid configuration index.');
+            return;
+        }
+        
         if (!configId) {
             showModal('Error', 'No configuration found.');
             return;
         }
         
-        // If index is provided, use it to update the config directly
-        if (index !== undefined && index !== null) {
-            const settings = configData.settings;
-            if (Array.isArray(settings) && index >= 0 && index < settings.length) {
-                const config = settings[index];
-                if (config && typeof config === 'object') {
-                    config.status = status;
-                    config.operation_status = "change_status: Status updated to '" + status + "'";
-                    
-                    // Save all data
-                    const postData = {
-                        settings: configData.settings,
-                        accounts: configData.accounts || {},
-                        captions: configData.captions || [],
-                        timeorders: configData.timeorders || {},
-                        filters: configData.filters || [],
-                        dynamic_fields: configData.dynamic_fields || {}
-                    };
-                    
-                    const formData = new FormData();
-                    formData.append('save_all', 'true');
-                    formData.append('settings', JSON.stringify(postData.settings));
-                    formData.append('accounts', JSON.stringify(postData.accounts));
-                    formData.append('captions', JSON.stringify(postData.captions));
-                    formData.append('timeorders', JSON.stringify(postData.timeorders));
-                    formData.append('filters', JSON.stringify(postData.filters));
-                    formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
-                    
-                    fetch(window.location.href, {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            window.location.reload();
-                        } else {
-                            showModal('Error', data.message);
-                        }
-                    })
-                    .catch(error => {
-                        showModal('Error', 'Error: ' + error.message);
-                    });
-                    return;
-                }
-            }
+        const settings = configData.settings;
+        if (!Array.isArray(settings) || index < 0 || index >= settings.length) {
+            showModal('Error', 'Configuration not found at index ' + index);
+            return;
         }
         
-        // Fallback: use the old method with author
+        const config = settings[index];
+        if (!config || typeof config !== 'object') {
+            showModal('Error', 'Invalid configuration.');
+            return;
+        }
+        
+        // Update the status at root level ONLY
+        config.status = status;
+        config.operation_status = "change_status: Status updated to '" + status + "'";
+        
+        // REMOVE status and operation_status from dynamic_values
+        if (config.dynamic_values && typeof config.dynamic_values === 'object') {
+            delete config.dynamic_values.status;
+            delete config.dynamic_values.operation_status;
+        }
+        
+        // Save all data
+        const postData = {
+            settings: configData.settings,
+            accounts: configData.accounts || {},
+            captions: configData.captions || [],
+            timeorders: configData.timeorders || {},
+            filters: configData.filters || [],
+            dynamic_fields: configData.dynamic_fields || {}
+        };
+        
         const formData = new FormData();
-        formData.append('update_status', 'true');
-        formData.append('id', configId);
-        formData.append('status', status);
-        formData.append('author', author);
+        formData.append('save_all', 'true');
+        formData.append('settings', JSON.stringify(postData.settings));
+        formData.append('accounts', JSON.stringify(postData.accounts));
+        formData.append('captions', JSON.stringify(postData.captions));
+        formData.append('timeorders', JSON.stringify(postData.timeorders));
+        formData.append('filters', JSON.stringify(postData.filters));
+        formData.append('dynamic_fields', JSON.stringify(postData.dynamic_fields));
+        
+        // Show loading
+        showModal('Processing', 'Updating status to "' + status + '"...');
         
         fetch(window.location.href, {
             method: 'POST',
@@ -3038,15 +3154,41 @@
         })
         .then(response => response.json())
         .then(data => {
+            closeModal();
             if (data.success) {
-                window.location.reload();
+                showModal('Success', 'Status updated to "' + status + '"! Refreshing...');
+                setTimeout(() => window.location.reload(), 1500);
             } else {
-                showModal('Error', data.message);
+                showModal('Error', data.message || 'Failed to update status.');
             }
         })
         .catch(error => {
+            closeModal();
             showModal('Error', 'Error: ' + error.message);
         });
+    }
+
+    // Remove the old changeStatus function entirely - it's causing confusion
+    // If you need to keep it for backward compatibility, redirect it:
+    function changeStatus(author, status, index) {
+        // Always use index if available
+        if (index !== undefined && index !== null && index !== -1) {
+            changeStatusByIndex(index, status);
+            return;
+        }
+        
+        // If no index, try to find by author (but this should be avoided)
+        const settings = configData.settings;
+        if (Array.isArray(settings)) {
+            for (let i = 0; i < settings.length; i++) {
+                let configAuthor = settings[i].author || (settings[i].dynamic_values && settings[i].dynamic_values.author);
+                if (configAuthor === author) {
+                    changeStatusByIndex(i, status);
+                    return;
+                }
+            }
+        }
+        showModal('Error', 'Configuration not found for author: ' + author);
     }
     
     // ===== MODAL =====
@@ -5043,22 +5185,15 @@ function deleteCaptionAuthor(index) {
                         selectedValue = selectedOption.value;
                         isCopiedLinks = selectedOption.dataset.isCopiedLinks === 'true';
                         
-                        // For copied links, the value already has domain from getSourceValues
-                        // But we need to ensure it's properly formatted
                         if (isCopiedLinks && sourceType === 'copied_links') {
-                            // The value already has domain prepended, so we keep it as is
-                            // But if it's a JSON string, we need to parse and reconstruct
                             try {
                                 const parsed = JSON.parse(selectedValue);
                                 if (typeof parsed === 'object' && parsed !== null) {
-                                    // It's already in the correct format with domain
-                                    // Keep it as is
                                     dynamicValues[key] = selectedValue;
                                 } else {
                                     dynamicValues[key] = selectedValue;
                                 }
                             } catch (e) {
-                                // Not JSON, keep as is
                                 dynamicValues[key] = selectedValue;
                             }
                         } else {
@@ -5088,11 +5223,10 @@ function deleteCaptionAuthor(index) {
         const firstKey = Object.keys(dynamicValues)[0] || 'default';
         const author = dynamicValues[firstKey] || 'default';
         
+        // Create settings object with status at root level (NOT inside dynamic_values)
         const settingsObj = {
             author: author,
-            dynamic_values: dynamicValues,
-            status: 'pending',
-            operation_status: ''
+            dynamic_values: dynamicValues
         };
         
         let existingSettings = configData.settings;
@@ -5102,8 +5236,11 @@ function deleteCaptionAuthor(index) {
             if (isEditMode && window._editingIndex !== undefined && window._editingIndex !== null) {
                 const idx = window._editingIndex;
                 if (idx >= 0 && idx < existingSettings.length) {
+                    // Preserve existing status and operation_status from root level
                     if (existingSettings[idx] && existingSettings[idx].status) {
                         settingsObj.status = existingSettings[idx].status;
+                    } else {
+                        settingsObj.status = 'pending';
                     }
                     if (existingSettings[idx] && existingSettings[idx].operation_status) {
                         settingsObj.operation_status = existingSettings[idx].operation_status;
@@ -5116,6 +5253,8 @@ function deleteCaptionAuthor(index) {
                     if (existingSettings[i] && existingSettings[i].author === editingAuthor) {
                         if (existingSettings[i] && existingSettings[i].status) {
                             settingsObj.status = existingSettings[i].status;
+                        } else {
+                            settingsObj.status = 'pending';
                         }
                         if (existingSettings[i] && existingSettings[i].operation_status) {
                             settingsObj.operation_status = existingSettings[i].operation_status;
@@ -5126,21 +5265,32 @@ function deleteCaptionAuthor(index) {
                     }
                 }
                 if (!found) {
+                    settingsObj.status = 'pending';
                     existingSettings.push(settingsObj);
                 }
             } else {
                 for (let i = 0; i < existingSettings.length; i++) {
                     if (existingSettings[i] && existingSettings[i].author === author) {
+                        if (existingSettings[i] && existingSettings[i].status) {
+                            settingsObj.status = existingSettings[i].status;
+                        } else {
+                            settingsObj.status = 'pending';
+                        }
+                        if (existingSettings[i] && existingSettings[i].operation_status) {
+                            settingsObj.operation_status = existingSettings[i].operation_status;
+                        }
                         existingSettings[i] = settingsObj;
                         found = true;
                         break;
                     }
                 }
                 if (!found) {
+                    settingsObj.status = 'pending';
                     existingSettings.push(settingsObj);
                 }
             }
         } else {
+            settingsObj.status = 'pending';
             existingSettings = [settingsObj];
         }
         
@@ -5191,7 +5341,6 @@ function deleteCaptionAuthor(index) {
             saveBtn.disabled = false;
         });
     }
-    
     // ===== SAVE SETUP =====
     function saveSetup() {
         const postData = {
