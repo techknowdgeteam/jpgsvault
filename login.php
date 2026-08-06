@@ -1,5 +1,5 @@
 <?php
-// login.php - Standalone login page for Tech Tool
+// login.php - Standalone login page for TASK TOOL
 session_start();
 
 // Database configuration
@@ -91,7 +91,7 @@ $redirectUrl = 'index.php';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tech Tool - Login</title>
+    <title>TASK TOOL - Login</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -246,7 +246,7 @@ $redirectUrl = 'index.php';
 <body>
     <div class="login-container">
         <div class="logo">🔧</div>
-        <h1>Tech Tool</h1>
+        <h1>TASK TOOL</h1>
         <p class="subtitle">Secure Access</p>
         
         <div id="setup-section" style="display: <?= $hasPasskey ? 'none' : 'block' ?>;">

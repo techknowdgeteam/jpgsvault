@@ -26,7 +26,7 @@ if (!$isAuthenticated) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tech Tool - Dashboard</title>
+    <title>TASK TOOL - Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
@@ -287,7 +287,7 @@ if (!$isAuthenticated) {
     <div class="main-header">
         <div class="logo">
             <span class="icon">🔧</span>
-            <span>Tech Tool</span>
+            <span>TASK TOOL</span>
         </div>
         <div class="header-actions">
             <button class="logout-btn" onclick="logout()">Logout</button>
@@ -297,7 +297,7 @@ if (!$isAuthenticated) {
     <!-- ===== SCROLLABLE BODY ===== -->
     <div class="scroll-body">
         <div class="dashboard-container">
-            <div class="dashboard-title">Welcome to Tech Tool</div>
+            <div class="dashboard-title">Welcome to TASK TOOL</div>
             <div class="dashboard-subtitle">Select an application to get started</div>
             
             <div class="app-grid">
