@@ -567,7 +567,7 @@
             height: 100%; 
             overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: linear-gradient(135deg, #e8f4f8 0%, #d4e9f0 50%, #e8f5e9 100%);
+            background: #ffffff;
         }
         
         input, select, textarea {
@@ -740,7 +740,7 @@
             background: linear-gradient(145deg, #ffffff, #f0faf5);
             border-radius: 20px;
             padding: 30px 25px;
-            box-shadow: 0 8px 32px rgba(46,204,113,0.08), 0 2px 8px rgba(0,0,0,0.04);
+            box-shadow: 0 8px 32px rgba(13, 14, 14, 0.08), 0 2px 8px rgba(0,0,0,0.04);
             cursor: pointer;
             transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
             min-height: 160px;
@@ -872,7 +872,7 @@
         .config-card.status-card.pending .card-status-badge {
             background: linear-gradient(135deg, #f39c12, #e67e22);
         }
-        .config-card.status-card.successful .card-status-badge {
+        .config-card.status-card.completed .card-status-badge {
             background: linear-gradient(135deg, #2ecc71, #27ae60);
         }
         .config-card.status-card.aborted .card-status-badge {
@@ -2219,6 +2219,694 @@
                 width: 70px;
             }
         }
+        /* ===== FLOATING HELP BUTTON ===== */
+        .help-floating-btn {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            z-index: 999;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3498db, #2ecc71);
+            color: white;
+            border: none;
+            font-size: 24px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(52,152,219,0.4);
+            transition: all 0.3s ease;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .help-floating-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 30px rgba(52,152,219,0.6);
+        }
+
+        .help-floating-btn.visible {
+            display: flex;
+        }
+
+        /* ===== HELP MODAL ===== */
+        .help-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(8px);
+            padding: 20px;
+        }
+
+        .help-modal-overlay.active {
+            display: flex;
+        }
+
+        .help-modal-box {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            max-width: 520px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: modalSlideIn 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            margin: auto;
+        }
+
+        /* Scrollbar styling for the modal itself */
+        .help-modal-box::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .help-modal-box::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.05);
+            border-radius: 8px;
+        }
+
+        .help-modal-box::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #2ecc71, #3498db);
+            border-radius: 8px;
+        }
+
+        .help-modal-box::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #27ae60, #2980b9);
+        }
+
+        .help-modal-box .help-modal-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .help-modal-box .help-modal-title .icon {
+            font-size: 24px;
+        }
+
+        .help-modal-box .help-subtitle {
+            font-size: 13px;
+            color: #5a7a8a;
+            margin-bottom: 16px;
+            line-height: 1.5;
+            flex-shrink: 0;
+        }
+
+        .help-modal-box .help-section {
+            margin-bottom: 14px;
+            padding: 14px;
+            background: #f8fcf9;
+            border-radius: 10px;
+            border: 1px solid #e0ece8;
+            flex-shrink: 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .help-modal-box .help-section:last-of-type {
+            flex-shrink: 1;
+            overflow: hidden;
+        }
+
+        .help-modal-box .help-section .section-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .help-modal-box .help-section .section-label .badge {
+            background: linear-gradient(135deg, #3498db, #2ecc71);
+            color: white;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .help-modal-box .help-section input[type="date"] {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e0ece8;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            transition: all 0.3s;
+            box-sizing: border-box;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .help-modal-box .help-section input[type="date"]:focus {
+            border-color: #2ecc71;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(46,204,113,0.1);
+        }
+
+        .help-modal-box .help-section select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e0ece8;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            transition: all 0.3s;
+            box-sizing: border-box;
+            -webkit-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232c3e50' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 14px;
+            padding-right: 36px;
+        }
+
+        .help-modal-box .help-section select:focus {
+            border-color: #2ecc71;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(46,204,113,0.1);
+        }
+
+        /* ===== TIME LIST DISPLAY WITH MAX HEIGHT AND SCROLLING ===== */
+        .help-modal-box .help-section .time-list-display-wrapper {
+            max-height: 150px;
+            overflow-y: auto;
+            margin-top: 8px;
+            border-radius: 6px;
+            border: 1px solid #e0ece8;
+            background: white;
+            box-sizing: border-box;
+            width: 100%;
+        }
+
+        .help-modal-box .help-section .time-list-display-wrapper::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .help-modal-box .help-section .time-list-display-wrapper::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.03);
+            border-radius: 6px;
+        }
+
+        .help-modal-box .help-section .time-list-display-wrapper::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #2ecc71, #3498db);
+            border-radius: 6px;
+        }
+
+        .help-modal-box .help-section .time-list-display {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3px;
+            padding: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .help-modal-box .help-section .time-list-display .time-item {
+            background: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #e8f0ec;
+            text-align: center;
+            font-size: 12px;
+            color: #2c3e50;
+            box-sizing: border-box;
+        }
+
+        .help-modal-box .help-section .time-list-display .time-item.header {
+            background: linear-gradient(135deg, #2ecc71, #1abc9c);
+            color: white;
+            font-weight: 600;
+            border: none;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        .help-modal-box .help-section .no-times {
+            color: #999;
+            font-size: 13px;
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        /* ===== CALCULATION RESULT ===== */
+        .help-modal-box .help-section .calculation-result {
+            margin-top: 10px;
+            padding: 12px;
+            background: linear-gradient(135deg, #e8f4f8, #d4e9f0);
+            border-radius: 8px;
+            border: 2px solid #2ecc71;
+            box-sizing: border-box;
+            width: 100%;
+        }
+
+        .help-modal-box .help-section .calculation-result .result-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 3px 0;
+            font-size: 14px;
+        }
+
+        .help-modal-box .help-section .calculation-result .result-row .label {
+            color: #5a7a8a;
+        }
+
+        .help-modal-box .help-section .calculation-result .result-row .value {
+            font-weight: 700;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+
+        .help-modal-box .help-section .calculation-result .result-row .value.highlight {
+            color: #2ecc71;
+            font-size: 20px;
+        }
+
+        .help-modal-box .help-section .calculation-result .calc-note {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #c8e0d8;
+            font-size: 11px;
+            color: #5a7a8a;
+        }
+
+        /* ===== MODAL ACTIONS - FIXED BUTTON WIDTH ===== */
+        .help-modal-box .help-modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 14px;
+            flex-shrink: 0;
+            padding-top: 12px;
+            border-top: 1px solid #e0ece8;
+            flex-wrap: wrap;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .help-modal-box .help-modal-actions .btn {
+            padding: 9px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+            min-width: 100px;
+            flex: 0 1 auto;
+            text-align: center;
+            white-space: nowrap;
+            box-sizing: border-box;
+        }
+
+        .help-modal-box .help-modal-actions .btn-close-help {
+            background: linear-gradient(135deg, #2ecc71, #1abc9c);
+            color: white;
+            box-shadow: 0 2px 12px rgba(46,204,113,0.25);
+        }
+
+        .help-modal-box .help-modal-actions .btn-close-help:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(46,204,113,0.35);
+        }
+
+        .help-modal-box .help-modal-actions .btn-calc {
+            background: linear-gradient(135deg, #3498db, #2ecc71);
+            color: white;
+            box-shadow: 0 2px 12px rgba(52,152,219,0.25);
+        }
+
+        .help-modal-box .help-modal-actions .btn-calc:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(52,152,219,0.35);
+        }
+
+        /* ===== RESPONSIVE - MOBILE/PORTRAIT ===== */
+        @media (max-width: 768px) {
+            .help-modal-overlay {
+                padding: 10px;
+                align-items: center;
+            }
+            
+            .help-modal-box {
+                padding: 18px;
+                max-height: 92vh;
+                max-width: 100%;
+                border-radius: 14px;
+                margin: 10px;
+                width: calc(100% - 20px);
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-title {
+                font-size: 18px;
+            }
+            
+            .help-modal-box .help-modal-title .icon {
+                font-size: 22px;
+            }
+            
+            .help-modal-box .help-subtitle {
+                font-size: 12px;
+                margin-bottom: 12px;
+            }
+            
+            .help-modal-box .help-section {
+                padding: 12px;
+                margin-bottom: 10px;
+            }
+            
+            .help-modal-box .help-section .section-label {
+                font-size: 12px;
+            }
+            
+            .help-modal-box .help-section input[type="date"] {
+                padding: 9px 12px;
+                font-size: 16px !important;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section select {
+                padding: 9px 12px;
+                font-size: 16px !important;
+                padding-right: 32px;
+                background-size: 12px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display-wrapper {
+                max-height: 120px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display {
+                grid-template-columns: 1fr 1fr;
+                gap: 2px;
+                padding: 3px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display .time-item {
+                padding: 5px 8px;
+                font-size: 11px;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .calculation-result {
+                padding: 10px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row {
+                font-size: 13px;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row .value {
+                font-size: 15px;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row .value.highlight {
+                font-size: 18px;
+            }
+            
+            .help-modal-box .help-modal-actions {
+                flex-direction: column;
+                gap: 8px;
+                margin-top: 12px;
+                padding-top: 10px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-actions .btn {
+                width: 100%;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-width: unset;
+                flex: 1 1 100%;
+                white-space: normal;
+                box-sizing: border-box;
+            }
+            
+            .help-floating-btn {
+                bottom: 85px;
+                right: 20px;
+                width: 45px;
+                height: 45px;
+                font-size: 20px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .help-modal-overlay {
+                padding: 5px;
+            }
+            
+            .help-modal-box {
+                padding: 14px;
+                max-height: 95vh;
+                border-radius: 12px;
+                margin: 5px;
+                width: calc(100% - 10px);
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-title {
+                font-size: 16px;
+                gap: 6px;
+            }
+            
+            .help-modal-box .help-modal-title .icon {
+                font-size: 18px;
+            }
+            
+            .help-modal-box .help-subtitle {
+                font-size: 11px;
+                margin-bottom: 10px;
+            }
+            
+            .help-modal-box .help-section {
+                padding: 10px;
+                margin-bottom: 8px;
+                border-radius: 8px;
+            }
+            
+            .help-modal-box .help-section .section-label {
+                font-size: 11px;
+                gap: 4px;
+            }
+            
+            .help-modal-box .help-section .section-label .badge {
+                font-size: 9px;
+                padding: 1px 6px;
+            }
+            
+            .help-modal-box .help-section input[type="date"] {
+                padding: 8px 10px;
+                font-size: 16px !important;
+                border-radius: 6px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section select {
+                padding: 8px 10px;
+                font-size: 16px !important;
+                border-radius: 6px;
+                padding-right: 28px;
+                background-size: 10px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display-wrapper {
+                max-height: 100px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display {
+                grid-template-columns: 1fr 1fr;
+                gap: 2px;
+                padding: 2px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .time-list-display .time-item {
+                padding: 4px 6px;
+                font-size: 10px;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .calculation-result {
+                padding: 8px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row {
+                font-size: 12px;
+                padding: 2px 0;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row .value {
+                font-size: 14px;
+            }
+            
+            .help-modal-box .help-section .calculation-result .result-row .value.highlight {
+                font-size: 16px;
+            }
+            
+            .help-modal-box .help-section .calculation-result .calc-note {
+                font-size: 10px;
+                margin-top: 6px;
+                padding-top: 6px;
+            }
+            
+            .help-modal-box .help-modal-actions {
+                gap: 6px;
+                margin-top: 10px;
+                padding-top: 8px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-actions .btn {
+                padding: 8px 12px;
+                font-size: 13px;
+                border-radius: 6px;
+                width: 100%;
+                flex: 1 1 100%;
+                box-sizing: border-box;
+                white-space: normal;
+            }
+            
+            .help-floating-btn {
+                bottom: 75px;
+                right: 15px;
+                width: 40px;
+                height: 40px;
+                font-size: 18px;
+            }
+        }
+
+        /* ===== LANDSCAPE PHONES ===== */
+        @media (max-height: 600px) and (orientation: landscape) {
+            .help-modal-overlay {
+                padding: 10px;
+                align-items: center;
+            }
+            
+            .help-modal-box {
+                max-height: 90vh;
+                padding: 14px 18px;
+                box-sizing: border-box;
+                border-radius: 12px;
+                max-width: 500px;
+                margin: 10px;
+            }
+            
+            .help-modal-box .help-section {
+                padding: 8px;
+                margin-bottom: 8px;
+            }
+            
+            .help-modal-box .help-section .time-list-display-wrapper {
+                max-height: 70px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-title {
+                font-size: 16px;
+                margin-bottom: 4px;
+            }
+            
+            .help-modal-box .help-modal-title .icon {
+                font-size: 18px;
+            }
+            
+            .help-modal-box .help-subtitle {
+                font-size: 11px;
+                margin-bottom: 8px;
+            }
+            
+            .help-modal-box .help-modal-actions {
+                flex-direction: row;
+                margin-top: 8px;
+                padding-top: 8px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-modal-actions .btn {
+                padding: 6px 16px;
+                font-size: 12px;
+                min-width: 70px;
+                flex: 1 1 auto;
+                white-space: nowrap;
+                box-sizing: border-box;
+            }
+            
+            .help-modal-box .help-section input[type="date"],
+            .help-modal-box .help-section select {
+                padding: 6px 10px;
+                font-size: 14px !important;
+            }
+        }
+
+        /* ===== LARGE SCREENS - OPTIMIZATION ===== */
+        @media (min-width: 1200px) {
+            .help-modal-box {
+                max-width: 560px;
+                padding: 30px;
+            }
+            
+            .help-modal-box .help-modal-actions .btn {
+                padding: 10px 30px;
+                font-size: 14px;
+                min-width: 120px;
+            }
+        }
+        .calculate-and-close-div{
+            display: flex;
+            justify-content: center;
+            padding: 5px;
+        }
+        .calculate-and-close-div button{
+            background: linear-gradient(135deg, #3498db, #2ecc71);
+            width: 100%;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -2427,6 +3115,8 @@
         <button class="btn btn-save-config" id="saveConfigBtn" onclick="saveConfig()" style="display:none;">💾 Save Configuration</button>
         <button class="btn btn-save-setup" id="saveSetupBtn" onclick="saveSetup()" style="display:none;">💾 Save Setup</button>
     </div>
+    <!-- ===== FLOATING HELP BUTTON ===== -->
+    <button class="help-floating-btn" id="helpFloatingBtn" onclick="openHelpModal()">?</button>
     
     <!-- ===== MODAL ===== -->
     <div class="modal-overlay" id="customModal">
@@ -2439,7 +3129,77 @@
             </div>
         </div>
     </div>
-
+    <!-- ===== HELP MODAL ===== -->
+    <div class="help-modal-overlay" id="helpModal">
+        <div class="help-modal-box">
+            <div class="help-modal-title">
+                <span class="icon">📊</span>
+                Calculate Images Needed
+            </div>
+            <div class="help-subtitle">
+                Enter the date range to calculate how many images/cards are needed based on the selected time order.
+            </div>
+            
+            <div class="help-section">
+                <div class="section-label">
+                    📅 From Date
+                    <span class="badge">Start</span>
+                </div>
+                <input type="date" id="helpFromDate">
+            </div>
+            
+            <div class="help-section">
+                <div class="section-label">
+                    📅 To Date
+                    <span class="badge">End</span>
+                </div>
+                <input type="date" id="helpToDate">
+            </div>
+            
+            <div class="help-section">
+                <div class="section-label">
+                    ⏰ Time Order
+                    <span class="badge" id="helpTimeOrderName">Select a time order</span>
+                </div>
+                <select id="helpTimeOrderSelect">
+                    <option value="">-- Select Time Order --</option>
+                </select>
+                <div class="time-list-display-wrapper" id="helpTimeListWrapper">
+                    <div id="helpTimeListDisplay">
+                        <div class="no-times">Select a time order to see the times</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="help-section" id="helpResultSection" style="display:none;">
+                <div class="calculation-result">
+                    <div class="result-row">
+                        <span class="label">📅 Total Days:</span>
+                        <span class="value" id="helpTotalDays">0</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="label">⏰ Times Per Day:</span>
+                        <span class="value" id="helpTimesPerDay">0</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="label">🖼️ Total Images Needed:</span>
+                        <span class="value highlight" id="helpTotalImages">0</span>
+                    </div>
+                    <div style="margin-top:10px; padding-top:10px; border-top:1px dashed #c8e0d8; font-size:12px; color:#5a7a8a;">
+                        Calculation: Days × Times Per Day = Total Images
+                    </div>
+                </div>
+            </div>
+            
+            <div class="calculate-and-close-div">
+                <button class="btn btn-calc" onclick="calculateHelp()">🧮 Calculate</button>
+            </div>
+            
+            <div class="calculate-and-close-div">
+                <button class="btn btn-close-help" onclick="closeHelpModal()">Close</button>
+            </div>
+        </div>
+    </div>
 <script>
     // ===== DATA =====
     let configData = {
@@ -2491,6 +3251,167 @@
     let editingCaptionAuthor = null;
     let _newTimeList = [];
     let _newDefaultValues = [];
+    // ===== HELP MODAL FUNCTIONS =====
+    function openHelpModal() {
+        document.getElementById('helpModal').classList.add('active');
+        // Populate time orders
+        populateHelpTimeOrders();
+        // Set default dates (today and 7 days from now)
+        const today = new Date();
+        const sevenDaysLater = new Date();
+        sevenDaysLater.setDate(today.getDate() + 7);
+        
+        document.getElementById('helpFromDate').value = today.toISOString().split('T')[0];
+        document.getElementById('helpToDate').value = sevenDaysLater.toISOString().split('T')[0];
+        
+        // Hide result section initially
+        document.getElementById('helpResultSection').style.display = 'none';
+    }
+
+    function closeHelpModal() {
+        document.getElementById('helpModal').classList.remove('active');
+    }
+
+    function populateHelpTimeOrders() {
+        const select = document.getElementById('helpTimeOrderSelect');
+        const timeOrders = configData.timeorders || {};
+        select.innerHTML = '<option value="">-- Select Time Order --</option>';
+        
+        for (const [key, value] of Object.entries(timeOrders)) {
+            const option = document.createElement('option');
+            option.value = key;
+            const count = Array.isArray(value) ? value.length : 0;
+            option.textContent = key + ' (' + count + ' times)';
+            select.appendChild(option);
+        }
+        
+        // Auto-select first time order if exists
+        const keys = Object.keys(timeOrders);
+        if (keys.length > 0) {
+            select.value = keys[0];
+            displayHelpTimes(keys[0]);
+        }
+        
+        // Add change event
+        select.onchange = function() {
+            displayHelpTimes(this.value);
+        };
+    }
+
+    function displayHelpTimes(key) {
+        const container = document.getElementById('helpTimeListDisplay');
+        const wrapper = document.getElementById('helpTimeListWrapper');
+        const timeOrders = configData.timeorders || {};
+        
+        if (!key || !timeOrders[key]) {
+            container.innerHTML = '<div class="no-times">Select a time order to see the times</div>';
+            document.getElementById('helpTimeOrderName').textContent = 'Select a time order';
+            return;
+        }
+        
+        const times = timeOrders[key];
+        document.getElementById('helpTimeOrderName').textContent = key + ' (' + times.length + ' times)';
+        
+        if (!Array.isArray(times) || times.length === 0) {
+            container.innerHTML = '<div class="no-times">No times recorded for this order</div>';
+            return;
+        }
+        
+        let html = '<div class="time-list-display">';
+        html += '<div class="time-item header">12 Hours</div>';
+        html += '<div class="time-item header">24 Hours</div>';
+        times.forEach(time => {
+            const time12 = time['12hours'] || time.twelveHour || time.time || '--:--';
+            const time24 = time['24hours'] || time.twentyFourHour || '';
+            html += '<div class="time-item">' + time12 + '</div>';
+            html += '<div class="time-item">' + time24 + '</div>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function calculateHelp() {
+        const fromDate = document.getElementById('helpFromDate').value;
+        const toDate = document.getElementById('helpToDate').value;
+        const timeOrderKey = document.getElementById('helpTimeOrderSelect').value;
+        const timeOrders = configData.timeorders || {};
+        
+        if (!fromDate || !toDate) {
+            showModal('Error', 'Please select both From and To dates.');
+            return;
+        }
+        
+        if (!timeOrderKey || !timeOrders[timeOrderKey]) {
+            showModal('Error', 'Please select a valid time order.');
+            return;
+        }
+        
+        // Calculate days difference
+        const from = new Date(fromDate);
+        const to = new Date(toDate);
+        const diffTime = Math.abs(to - from);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Include both days
+        
+        // Get times per day
+        const times = timeOrders[timeOrderKey];
+        const timesPerDay = Array.isArray(times) ? times.length : 0;
+        
+        // Calculate total images needed
+        const totalImages = diffDays * timesPerDay;
+        
+        // Display result
+        document.getElementById('helpTotalDays').textContent = diffDays;
+        document.getElementById('helpTimesPerDay').textContent = timesPerDay;
+        document.getElementById('helpTotalImages').textContent = totalImages;
+        document.getElementById('helpResultSection').style.display = 'block';
+        
+        // Scroll to result
+        document.getElementById('helpResultSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Close help modal on overlay click
+    document.addEventListener('click', function(e) {
+        if (e.target === document.getElementById('helpModal')) {
+            closeHelpModal();
+        }
+    });
+
+    // Show/hide help button based on view
+    function toggleHelpButton() {
+        const btn = document.getElementById('helpFloatingBtn');
+        const addConfigView = document.getElementById('addConfigView');
+        if (addConfigView && addConfigView.classList.contains('active')) {
+            btn.classList.add('visible');
+        } else {
+            btn.classList.remove('visible');
+        }
+    }
+
+    // Override showAddConfig and showDashboard to toggle help button
+    const originalShowAddConfig = window.showAddConfig;
+    window.showAddConfig = function() {
+        if (originalShowAddConfig) originalShowAddConfig();
+        setTimeout(toggleHelpButton, 100);
+    };
+
+    const originalShowDashboard = window.showDashboard;
+    window.showDashboard = function() {
+        if (originalShowDashboard) originalShowDashboard();
+        setTimeout(toggleHelpButton, 100);
+    };
+
+    // Also check when views change via other functions
+    const originalShowSetupView = window.showSetupView;
+    window.showSetupView = function() {
+        if (originalShowSetupView) originalShowSetupView();
+        setTimeout(toggleHelpButton, 100);
+    };
+
+    const originalShowDetailView = window.showDetailView;
+    window.showDetailView = function(status) {
+        if (originalShowDetailView) originalShowDetailView(status);
+        setTimeout(toggleHelpButton, 100);
+    };
     
     // ===== VIEW NAVIGATION =====
     function showDashboard() {
@@ -2509,6 +3430,9 @@
         document.getElementById('backToDashboardBtn').style.display = 'none';
         document.getElementById('scrollBody').classList.remove('tabs-visible');
         document.getElementById('editModeBanner').classList.remove('visible');
+        
+        // Hide help button
+        document.getElementById('helpFloatingBtn').classList.remove('visible');
     }
     
     function showDetailView(status) {
@@ -2562,6 +3486,9 @@
         document.getElementById('settingsTabTitle').textContent = 'Set Configuration';
         document.getElementById('scrollBody').classList.remove('tabs-visible');
         document.getElementById('editModeBanner').classList.remove('visible');
+        
+        // Show help button
+        document.getElementById('helpFloatingBtn').classList.add('visible');
         
         loadAllData();
         renderDynamicFields();
@@ -3315,12 +4242,28 @@
             // Display captions as plain text lines without JSON
             let captionsDisplay = '';
             if (authorData.captions && authorData.captions.length > 0) {
+                // Extract just the description content
                 const captionLines = authorData.captions
-                    .map(cap => cap.description)
-                    .slice(0, 3); // Show first 3 captions as preview
+                    .map(cap => {
+                        // If cap is an object with description, extract it
+                        if (cap && typeof cap === 'object' && cap.description) {
+                            return cap.description;
+                        }
+                        // If cap is an object with caption field
+                        if (cap && typeof cap === 'object' && cap.caption) {
+                            return cap.caption;
+                        }
+                        // If cap is a string, use it directly
+                        if (typeof cap === 'string') {
+                            return cap;
+                        }
+                        // Fallback: stringify the object
+                        return JSON.stringify(cap);
+                    })
+                    .slice(0, 5); // Show first 5 captions as preview
                 captionsDisplay = captionLines.join(' | ');
-                if (authorData.captions.length > 3) {
-                    captionsDisplay += ` ... (+${authorData.captions.length - 3} more)`;
+                if (authorData.captions.length > 5) {
+                    captionsDisplay += ` ... (+${authorData.captions.length - 5} more)`;
                 }
             } else {
                 captionsDisplay = 'No captions';
@@ -3342,7 +4285,7 @@
             container.appendChild(div);
         });
     }
-    
+        
     function loadCaptionAuthors() {
         const select = document.getElementById('caption_author_select');
         if (!select) return;
@@ -4644,7 +5587,7 @@
         document.getElementById('caption_author_select').value = '';
     }
 
-    // Parse caption input - supports multiple formats
+    // Parse caption input - supports multiple formats with sanitization
     function parseCaptionInput(input) {
         if (!input || typeof input !== 'string') {
             return [];
@@ -4656,44 +5599,59 @@
         try {
             const parsed = JSON.parse(trimmed);
             
-            // Format 2: [{id: number, description: string}, ...]
-            if (Array.isArray(parsed)) {
-                // Check if it's format 2 (objects with id and description)
-                if (parsed.length > 0 && parsed[0].description !== undefined) {
-                    // Format 2 - keep as is
-                    return parsed.map(item => ({
-                        id: item.id || null,
-                        description: item.description || ''
-                    })).filter(item => item.description);
+            // Format: [{key-name: string, id: number, description: string}, ...]
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                // Check if it's the object format with description/caption field
+                if (parsed[0].description !== undefined || parsed[0].caption !== undefined) {
+                    // Use description or caption field
+                    const descriptionField = parsed[0].description !== undefined ? 'description' : 'caption';
+                    
+                    // Sanitize each description and create clean entries
+                    return parsed
+                        .filter(item => item[descriptionField] && item[descriptionField].trim())
+                        .map((item, index) => ({
+                            id: index + 1, // Reset IDs based on position
+                            description: sanitizeCaption(item[descriptionField].trim())
+                        }))
+                        .filter(item => item.description);
                 }
+                
                 // Format 1: ["caption 1", "caption 2", ...]
-                else if (parsed.length > 0 && typeof parsed[0] === 'string') {
-                    // Format 1 - convert to format 2
+                if (parsed.length > 0 && typeof parsed[0] === 'string') {
                     return parsed
                         .filter(item => typeof item === 'string' && item.trim())
                         .map((item, index) => ({
                             id: index + 1,
-                            description: item.trim()
-                        }));
+                            description: sanitizeCaption(item.trim())
+                        }))
+                        .filter(item => item.description);
                 }
             }
         } catch (e) {
-            // Not JSON - treat as single caption or split by newlines/commas
+            // Not JSON - treat as plain text with newlines
         }
         
-        // Not JSON: split by newlines or commas
-        const items = trimmed.split(/\n|,/).filter(item => item.trim());
+        // Not JSON: split by newlines
+        const items = trimmed.split(/\n+/).filter(item => item.trim());
         
         if (items.length === 0) {
             return [];
         }
         
-        // Check if each item looks like a caption object (contains "description" or "id")
+        // Try to parse each item as JSON object
         const maybeObjects = items.map(item => {
             try {
                 const obj = JSON.parse(item.trim());
-                if (obj && typeof obj === 'object' && obj.description !== undefined) {
-                    return { id: obj.id || null, description: obj.description };
+                if (obj && typeof obj === 'object') {
+                    // Check for description or caption field
+                    const descField = obj.description !== undefined ? 'description' : 
+                                    obj.caption !== undefined ? 'caption' : null;
+                    if (descField && obj[descField]) {
+                        return { 
+                            id: obj.id || null, 
+                            description: sanitizeCaption(obj[descField]) 
+                        };
+                    }
                 }
             } catch (e) {}
             return null;
@@ -4701,47 +5659,100 @@
         
         // If all items are valid objects, use them
         if (maybeObjects.every(item => item !== null)) {
-            return maybeObjects.filter(item => item && item.description);
+            return maybeObjects
+                .filter(item => item && item.description)
+                .map((item, index) => ({
+                    id: index + 1,
+                    description: item.description
+                }));
         }
         
-        // Otherwise treat as plain captions
+        // Otherwise treat as plain captions with newline separation
         return items
             .filter(item => item.trim())
             .map((item, index) => ({
                 id: index + 1,
-                description: item.trim()
-            }));
+                description: sanitizeCaption(item.trim())
+            }))
+            .filter(item => item.description);
+    }
+
+    // ===== CAPTION SANITIZATION HELPER =====
+    function sanitizeCaption(text) {
+        if (!text || typeof text !== 'string') {
+            return text;
+        }
+        
+        // Step 1: Remove all asterisk (*) characters
+        let sanitized = text.replace(/\*/g, '');
+        
+        // Step 2: Remove leading numbers only if at the very beginning
+        // Pattern: matches optional spaces, then numbers, then optional . or ) or - or space
+        // But only if they appear at the start of the string
+        sanitized = sanitized.replace(/^[\s]*\d+[\s]*[\.\)\-\:]?\s*/, '');
+        
+        // Step 3: Trim any extra whitespace
+        sanitized = sanitized.trim();
+        
+        return sanitized;
     }
 
     function addCaption() {
         const author = document.getElementById('caption_author_select').value;
-        const inputText = document.getElementById('new_caption_text').value.trim();
+        const inputText = document.getElementById('new_caption_text').value;
         
         if (!author) {
             showModal('Error', 'Please select an author.');
             return;
         }
         
-        if (!inputText) {
-            showModal('Error', 'Please enter caption text or JSON.');
+        if (!inputText || !inputText.trim()) {
+            showModal('Error', 'Please enter caption text.');
             return;
         }
         
-        // Parse the input into captions array
-        const newCaptions = parseCaptionInput(inputText);
+        // Parse the input - this now handles both JSON and plain text
+        let parsedCaptions = parseCaptionInput(inputText);
         
-        if (newCaptions.length === 0) {
+        // If parseCaptionInput returns empty, try manual JSON parsing as fallback
+        if (parsedCaptions.length === 0) {
+            try {
+                const trimmed = inputText.trim();
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    // Check for description or caption field
+                    const descField = parsed[0].description !== undefined ? 'description' : 
+                                    parsed[0].caption !== undefined ? 'caption' : null;
+                    if (descField) {
+                        parsedCaptions = parsed
+                            .filter(item => item[descField] && item[descField].trim())
+                            .map((item, index) => ({
+                                id: index + 1,
+                                description: sanitizeCaption(item[descField].trim())
+                            }))
+                            .filter(item => item.description);
+                    }
+                }
+            } catch (e) {
+                // Not JSON
+            }
+        }
+        
+        if (parsedCaptions.length === 0) {
             showModal('Error', 'No valid captions found. Please enter text, JSON array, or caption objects.');
             return;
         }
         
+        // Initialize captions array if not exists
         if (!configData.captions || !Array.isArray(configData.captions)) {
             configData.captions = [];
         }
         
+        // Find if author already exists
         let authorIndex = configData.captions.findIndex(item => item.name === author);
         
         if (authorIndex === -1) {
+            // Create new author entry
             configData.captions.push({
                 name: author,
                 id: configData.captions.length + 1,
@@ -4750,22 +5761,23 @@
             authorIndex = configData.captions.length - 1;
         }
         
-        // Get existing captions count for ID assignment
+        // Get existing captions count for ID continuation
         const existingCount = configData.captions[authorIndex].captions.length;
         
-        // Add new captions with proper IDs
-        newCaptions.forEach((caption, index) => {
-            const newCaption = {
-                id: existingCount + index + 1,
-                description: caption.description
-            };
-            configData.captions[authorIndex].captions.push(newCaption);
-        });
+        // Add new captions with proper IDs (continue from existing)
+        const newCaptions = parsedCaptions.map((caption, index) => ({
+            id: existingCount + index + 1,
+            description: caption.description
+        }));
         
+        configData.captions[authorIndex].captions = configData.captions[authorIndex].captions.concat(newCaptions);
+        
+        // Reload UI
         loadCaptions();
         renderDynamicFields();
         hideAddCaption();
-        showModal('Success', `${newCaptions.length} caption(s) added successfully for ${author}!`);
+        
+        showModal('Success', `${parsedCaptions.length} caption(s) added successfully for ${author}!`);
     }
 
     function editCaptions(index) {
@@ -4811,19 +5823,42 @@
         const textarea = document.getElementById('edit_captions_textarea');
         if (!textarea) return;
         
-        const inputText = textarea.value.trim();
+        const inputText = textarea.value;
         
-        // Parse the input
-        const newCaptions = parseCaptionInput(inputText);
+        // Parse the input - handles both JSON and plain text
+        let parsedCaptions = parseCaptionInput(inputText);
         
-        if (newCaptions.length === 0) {
+        // If parseCaptionInput returns empty, try manual JSON parsing as fallback
+        if (parsedCaptions.length === 0) {
+            try {
+                const trimmed = inputText.trim();
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    const descField = parsed[0].description !== undefined ? 'description' : 
+                                    parsed[0].caption !== undefined ? 'caption' : null;
+                    if (descField) {
+                        parsedCaptions = parsed
+                            .filter(item => item[descField] && item[descField].trim())
+                            .map((item, index) => ({
+                                id: index + 1,
+                                description: sanitizeCaption(item[descField].trim())
+                            }))
+                            .filter(item => item.description);
+                    }
+                }
+            } catch (e) {
+                // Not JSON
+            }
+        }
+        
+        if (parsedCaptions.length === 0) {
             showModal('Error', 'No valid captions found. Please enter text, JSON array, or caption objects.');
             return;
         }
         
-        // Replace all captions with the new ones
-        authorData.captions = newCaptions.map((caption, index) => ({
-            id: index + 1,
+        // Replace all captions with the sanitized ones (reset IDs)
+        authorData.captions = parsedCaptions.map((caption, idx) => ({
+            id: idx + 1,
             description: caption.description
         }));
         
@@ -5453,6 +6488,7 @@ function deleteCaptionAuthor(index) {
         
         loadDynamicFields();
     });
+
 </script>
 </body>
 </html>
