@@ -561,7 +561,7 @@
 
     // ===== DYNAMIC TABS HANDLING =====
     
-    // Save Dynamic Tabs for a user
+    // Save Dynamic Tabs for a user (UPDATED with additional_features)
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_dynamic_tabs'])) {
         $userId = intval($_POST['user_id'] ?? 0);
         $tabsData = isset($_POST['tabs_data']) ? json_decode($_POST['tabs_data'], true) : [];
@@ -586,12 +586,31 @@
                 }
             }
             
-            // Merge submitted tabs with existing submit_tab values
+            // Merge submitted tabs with existing submit_tab values and ensure additional_features
             foreach ($tabsData as &$tab) {
                 if (isset($tab['tab_name']) && isset($submitTabLookup[$tab['tab_name']])) {
                     $tab['submit_tab'] = $submitTabLookup[$tab['tab_name']];
                 } elseif (!isset($tab['submit_tab'])) {
-                    $tab['submit_tab'] = true; // Default only for truly new tabs
+                    $tab['submit_tab'] = true;
+                }
+                
+                // Ensure additional_features exists with defaults
+                if (!isset($tab['additional_features']) || !is_array($tab['additional_features'])) {
+                    $tab['additional_features'] = [
+                        'copy_button' => false,
+                        'transcript_detection' => false,
+                        'transcript_with_structured_data_detection' => false
+                    ];
+                }
+                // Ensure all keys exist
+                if (!isset($tab['additional_features']['copy_button'])) {
+                    $tab['additional_features']['copy_button'] = false;
+                }
+                if (!isset($tab['additional_features']['transcript_detection'])) {
+                    $tab['additional_features']['transcript_detection'] = false;
+                }
+                if (!isset($tab['additional_features']['transcript_with_structured_data_detection'])) {
+                    $tab['additional_features']['transcript_with_structured_data_detection'] = false;
                 }
             }
             
@@ -2587,6 +2606,52 @@
         font-size: 13px;
         color: #065f46;
     }
+    /* Toggle switch styles - ensure these exist */
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 40px;
+        height: 22px;
+        flex-shrink: 0;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: .4s;
+        border-radius: 22px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: #00695c;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(18px);
+    }
 </style>
 </head>
 <body>
@@ -2866,6 +2931,7 @@
                                     $elementType = $subField['element_type'] ?? 'input';
                                     $title = $subField['field-title'] ?? $subKey;
                                     $defaultValue = $subField['default_value'] ?? '';
+                                    $buttonUrl = $subField['button_url'] ?? '';
                             ?>
                                 <div class="sub-field-group">
                                     <label><?php echo htmlspecialchars($title); ?></label>
@@ -2892,6 +2958,13 @@
                                                 <option value="<?php echo htmlspecialchars($val); ?>" <?php echo ($val === $defaultValue) ? 'selected' : ''; ?>><?php echo htmlspecialchars($val); ?></option>
                                             <?php endforeach; ?>
                                         </select>
+                                    <?php elseif ($elementType === 'button'): ?>
+                                        <div>
+                                            <button type="button" class="btn btn-primary" onclick="openUrl('<?php echo htmlspecialchars(trim($buttonUrl), ENT_QUOTES); ?>')" style="padding:8px 20px;">
+                                                <?php echo htmlspecialchars($title); ?>
+                                            </button>
+                                            <input type="hidden" id="entry_<?php echo $key; ?>_<?php echo $subKey; ?>" value="<?php echo htmlspecialchars($buttonUrl); ?>" class="new-project-field" data-field-key="<?php echo $key; ?>" data-sub-key="<?php echo $subKey; ?>">
+                                        </div>
                                     <?php else: ?>
                                         <input type="text" id="entry_<?php echo $key; ?>_<?php echo $subKey; ?>" placeholder="Enter <?php echo htmlspecialchars($title); ?>..." value="<?php echo htmlspecialchars($defaultValue); ?>" class="new-project-field" data-field-key="<?php echo $key; ?>" data-sub-key="<?php echo $subKey; ?>">
                                     <?php endif; ?>
@@ -2911,6 +2984,7 @@
                             $elementType = $field['element_type'] ?? 'input';
                             $defaultValue = $field['default_value'] ?? '';
                             $defaultValues = $field['default_values'] ?? [];
+                            $buttonUrl = $field['button_url'] ?? '';
                         ?>
                         <?php if ($elementType === 'date-time-input'): ?>
                             <div class="datetime-group" id="field_<?php echo $key; ?>_container">
@@ -2951,6 +3025,16 @@
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="copyIndividualDefaultValue('field_<?php echo $key; ?>_container')">📋 Copy Default Value</button>
                                 </div>
                             </div>
+                        <?php elseif ($elementType === 'button'): ?>
+                            <div id="field_<?php echo $key; ?>_container">
+                                <button type="button" class="btn btn-primary" onclick="openUrl('<?php echo htmlspecialchars(trim($buttonUrl), ENT_QUOTES); ?>')" style="padding:8px 20px;">
+                                    <?php echo htmlspecialchars($field['field-title'] ?? $key); ?>
+                                </button>
+                                <input type="hidden" id="entry_<?php echo $key; ?>" value="<?php echo htmlspecialchars($buttonUrl); ?>" class="new-project-field" data-field-key="<?php echo $key; ?>">
+                                <div style="margin-top:5px; display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="copyIndividualFromDOM('field_<?php echo $key; ?>_container')">📋 Copy Element Value</button>
+                                </div>
+                            </div>
                         <?php else: ?>
                             <div id="field_<?php echo $key; ?>_container">
                                 <input type="text" id="entry_<?php echo $key; ?>" placeholder="Enter <?php echo htmlspecialchars($field['field-title'] ?? $key); ?>..." value="<?php echo htmlspecialchars($defaultValue); ?>" class="new-project-field" data-field-key="<?php echo $key; ?>">
@@ -2973,6 +3057,14 @@
 ?>
 
 <script>
+    function openUrl(url) {
+        if (!url) return;
+        // If URL doesn't have a protocol, add https://
+        if (!url.match(/^https?:\/\//i)) {
+            url = 'https://' + url;
+        }
+        window.open(url, '_blank');
+    }
     // ===== DATA =====
     var selectedUserId = <?php echo json_encode($selectedUserId); ?>;
     var globalDynamicFields = <?php echo json_encode($globalDynamicFields); ?>;
@@ -3523,6 +3615,9 @@
         document.getElementById('submitTabsForm').submit();
     }
 
+    // ===== UPDATE renderUserGlobalDynamicFields FUNCTION =====
+    // Replace the entire function with this version
+
     function renderUserGlobalDynamicFields() {
         var container = document.getElementById('userGlobalDynamicFieldsList');
         if (!container) return;
@@ -3551,7 +3646,12 @@
                 fieldInfo = 
                     '<div><strong>Type:</strong> Objects Field</div>' +
                     '<div><strong>Sub-fields:</strong> ' + subKeys.length + '</div>' +
-                    subKeys.map(function(sk) { return '<div style="font-size:12px; color:#6b7280; margin-left:10px;">• ' + sk + ' (' + (subFields[sk].element_type || 'input') + ')</div>'; }).join('');
+                    subKeys.map(function(sk) { 
+                        var sub = subFields[sk];
+                        var subElement = sub.element_type || 'input';
+                        var extraInfo = subElement === 'button' ? ' (Button → ' + (sub.button_url || 'No URL') + ')' : '';
+                        return '<div style="font-size:12px; color:#6b7280; margin-left:10px;">• ' + sk + ' (' + subElement + extraInfo + ')</div>'; 
+                    }).join('');
                 editFieldsHtml = 
                     '<div style="margin-top:10px; padding-top:10px; border-top:1px solid #e5e7eb;">' +
                     '<button type="button" class="btn btn-primary btn-sm" onclick="editGlobalDynamicField(\'' + key + '\')"> Edit Field</button>' +
@@ -3560,9 +3660,12 @@
             } else {
                 var defaultValue = field.default_value || '';
                 var defaultValues = field.default_values || [];
+                var buttonUrl = field.button_url || '';
+                var elementType = field.element_type || 'input';
+                var extraInfo = elementType === 'button' ? ' (URL: ' + buttonUrl + ')' : '';
                 fieldInfo = 
                     '<div><strong>Type:</strong> Individual Field</div>' +
-                    '<div><strong>Element:</strong> ' + (field.element_type || 'input') + '</div>' +
+                    '<div><strong>Element:</strong> ' + elementType + extraInfo + '</div>' +
                     (defaultValue ? '<div><strong>Default Value:</strong> ' + defaultValue + '</div>' : '') +
                     (defaultValues.length > 0 ? '<div><strong>Select Options:</strong> ' + defaultValues.join(', ') + '</div>' : '');
                 editFieldsHtml = 
@@ -3969,6 +4072,13 @@
                 var tabFields = tab.dynamic_fields_display || [];
                 var isExpanded = tab._expanded || false;
                 
+                // Get additional features with defaults
+                var additionalFeatures = tab.additional_features || {
+                    copy_button: false,
+                    transcript_detection: false,
+                    transcript_with_structured_data_detection: false
+                };
+                
                 var availableFieldsHtml = '';
                 if (fieldKeys.length === 0) {
                     availableFieldsHtml = '<p style="color:#6b7280; font-size:13px;">No dynamic fields available globally.</p>';
@@ -3986,6 +4096,38 @@
                             '</div>';
                     }).join('');
                 }
+                
+                // Additional features HTML with toggle switches
+                var additionalFeaturesHtml = 
+                    '<div style="margin-top:10px; padding-top:10px; border-top:1px solid #e5e7eb;">' +
+                    '<div style="font-weight:600; color:#1a1a2e; margin-bottom:8px;">Additional Features</div>' +
+                    '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">' +
+                    // Copy Element Value Toggle
+                    '<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#f8fafc; border-radius:6px; border:1px solid #e5e7eb;">' +
+                    '<span style="font-size:13px; color:#1a1a2e;">📋 Copy Element Value</span>' +
+                    '<label class="toggle-switch" style="position:relative; display:inline-block; width:40px; height:22px; flex-shrink:0;">' +
+                    '<input type="checkbox" class="additional-feature-toggle" data-feature="copy_button" ' + (additionalFeatures.copy_button ? 'checked' : '') + ' style="opacity:0; width:0; height:0;">' +
+                    '<span class="toggle-slider" style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:' + (additionalFeatures.copy_button ? '#00695c' : '#ccc') + '; transition:.4s; border-radius:22px;"></span>' +
+                    '</label>' +
+                    '</div>' +
+                    // Transcript Detection Toggle
+                    '<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#f8fafc; border-radius:6px; border:1px solid #e5e7eb;">' +
+                    '<span style="font-size:13px; color:#1a1a2e;">📝 Transcript Detection</span>' +
+                    '<label class="toggle-switch" style="position:relative; display:inline-block; width:40px; height:22px; flex-shrink:0;">' +
+                    '<input type="checkbox" class="additional-feature-toggle" data-feature="transcript_detection" ' + (additionalFeatures.transcript_detection ? 'checked' : '') + ' style="opacity:0; width:0; height:0;">' +
+                    '<span class="toggle-slider" style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:' + (additionalFeatures.transcript_detection ? '#00695c' : '#ccc') + '; transition:.4s; border-radius:22px;"></span>' +
+                    '</label>' +
+                    '</div>' +
+                    // Structured Data Detection Toggle
+                    '<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#f8fafc; border-radius:6px; border:1px solid #e5e7eb; grid-column: span 2;">' +
+                    '<span style="font-size:13px; color:#1a1a2e;">📊 Structured Data Detection</span>' +
+                    '<label class="toggle-switch" style="position:relative; display:inline-block; width:40px; height:22px; flex-shrink:0;">' +
+                    '<input type="checkbox" class="additional-feature-toggle" data-feature="transcript_with_structured_data_detection" ' + (additionalFeatures.transcript_with_structured_data_detection ? 'checked' : '') + ' style="opacity:0; width:0; height:0;">' +
+                    '<span class="toggle-slider" style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:' + (additionalFeatures.transcript_with_structured_data_detection ? '#00695c' : '#ccc') + '; transition:.4s; border-radius:22px;"></span>' +
+                    '</label>' +
+                    '</div>' +
+                    '</div>' +
+                    '</div>';
                 
                 html += 
                     '<div class="tab-editor-item" data-tab-index="' + index + '" style="border:1px solid #e5e7eb; border-radius:10px; padding:15px; margin-bottom:12px; background:#fafafa;">' +
@@ -4017,6 +4159,7 @@
                     availableFieldsHtml +
                     '</div>' +
                     '</div>' +
+                    additionalFeaturesHtml +
                     '</div>' +
                     '</div>';
             });
@@ -4088,7 +4231,13 @@
             header: '',
             description: '',
             dynamic_fields_display: [],
-            _expanded: false
+            _expanded: false,
+            submit_tab: true,
+            additional_features: {
+                copy_button: false,
+                transcript_detection: false,
+                transcript_with_structured_data_detection: false
+            }
         });
         userDynamicTabs = tabs;
         renderDynamicTabsEditor();
@@ -4120,6 +4269,21 @@
                     dynamicFieldsDisplay.push(toggle.getAttribute('data-field-key'));
                 }
             });
+            
+            // Get additional features from toggles
+            var featureToggles = item.querySelectorAll('.additional-feature-toggle');
+            var additionalFeatures = {
+                copy_button: false,
+                transcript_detection: false,
+                transcript_with_structured_data_detection: false
+            };
+            featureToggles.forEach(function(toggle) {
+                var feature = toggle.getAttribute('data-feature');
+                if (feature && additionalFeatures.hasOwnProperty(feature)) {
+                    additionalFeatures[feature] = toggle.checked;
+                }
+            });
+            
             var existingTab = userDynamicTabs[index] || {};
             tabs.push({
                 tab_name: nameInput ? nameInput.value.trim() : '',
@@ -4127,7 +4291,8 @@
                 description: descInput ? descInput.value.trim() : '',
                 dynamic_fields_display: dynamicFieldsDisplay,
                 _expanded: existingTab._expanded || false,
-                submit_tab: existingTab.submit_tab !== undefined ? existingTab.submit_tab : true
+                submit_tab: existingTab.submit_tab !== undefined ? existingTab.submit_tab : true,
+                additional_features: additionalFeatures // Save directly, no need to fetch existing
             });
         });
         document.getElementById('tabsDataInput').value = JSON.stringify(tabs);
@@ -4209,6 +4374,9 @@
     // ===== RENDER GLOBAL DYNAMIC FIELDS =====
     // ============================================================
 
+    // ===== UPDATE renderGlobalDynamicFields FUNCTION =====
+    // Replace the entire function with this version
+
     function renderGlobalDynamicFields() {
         var container = document.getElementById('globalDynamicFieldsList');
         if (!container) return;
@@ -4237,7 +4405,12 @@
                 fieldInfo = 
                     '<div><strong>Type:</strong> Objects Field</div>' +
                     '<div><strong>Sub-fields:</strong> ' + subKeys.length + '</div>' +
-                    subKeys.map(function(sk) { return '<div style="font-size:12px; color:#6b7280; margin-left:10px;">• ' + sk + ' (' + (subFields[sk].element_type || 'input') + ')</div>'; }).join('');
+                    subKeys.map(function(sk) { 
+                        var sub = subFields[sk];
+                        var subElement = sub.element_type || 'input';
+                        var extraInfo = subElement === 'button' ? ' (Button → ' + (sub.button_url || 'No URL') + ')' : '';
+                        return '<div style="font-size:12px; color:#6b7280; margin-left:10px;">• ' + sk + ' (' + subElement + extraInfo + ')</div>'; 
+                    }).join('');
                 editFieldsHtml = 
                     '<div style="margin-top:10px; padding-top:10px; border-top:1px solid #e5e7eb;">' +
                     '<button type="button" class="btn btn-primary btn-sm" onclick="editGlobalDynamicField(\'' + key + '\')"> Edit Field</button>' +
@@ -4246,9 +4419,12 @@
             } else {
                 var defaultValue = field.default_value || '';
                 var defaultValues = field.default_values || [];
+                var buttonUrl = field.button_url || '';
+                var elementType = field.element_type || 'input';
+                var extraInfo = elementType === 'button' ? ' (URL: ' + buttonUrl + ')' : '';
                 fieldInfo = 
                     '<div><strong>Type:</strong> Individual Field</div>' +
-                    '<div><strong>Element:</strong> ' + (field.element_type || 'input') + '</div>' +
+                    '<div><strong>Element:</strong> ' + elementType + extraInfo + '</div>' +
                     (defaultValue ? '<div><strong>Default Value:</strong> ' + defaultValue + '</div>' : '') +
                     (defaultValues.length > 0 ? '<div><strong>Select Options:</strong> ' + defaultValues.join(', ') + '</div>' : '');
                 editFieldsHtml = 
@@ -4311,9 +4487,14 @@
         renderEditFieldDialog(fieldKey, field, title, isObjects, elementType, defaultValue);
     }
 
+    // ===== UPDATE renderEditFieldDialog FUNCTION =====
+    // Replace the entire function with this version
+
     function renderEditFieldDialog(fieldKey, field, title, isObjects, elementType, defaultValue) {
         var category = isObjects ? 'objects' : 'individual';
         var subFieldsHtml = '';
+        var buttonUrl = field.button_url || '';
+        
         if (isObjects) {
             var subFieldData = field.fieldkeyvalue || {};
             var subKeys = Object.keys(subFieldData);
@@ -4340,6 +4521,7 @@
                     '<option value="select" ' + (subElement === 'select' ? 'selected' : '') + '>Select</option>' +
                     '<option value="textarea" ' + (subElement === 'textarea' ? 'selected' : '') + '>Textarea</option>' +
                     '<option value="date-time-input" ' + (subElement === 'date-time-input' ? 'selected' : '') + '>Date & Time</option>' +
+                    '<option value="button" ' + (subElement === 'button' ? 'selected' : '') + '>Button</option>' +
                     '</select>' +
                     '</div>' +
                     '<div class="form-group" id="sub_default_value_container_' + idx + '">' +
@@ -4362,11 +4544,13 @@
                     '</div>';
             });
         }
+        
         var defaultValuesHtml = '';
         var defaultValues = field.default_values || [];
         defaultValues.forEach(function(val, idx) {
             defaultValuesHtml += '<span class="value-tag">' + val + ' <span class="remove-value" onclick="removeDefaultValue(' + idx + ')">×</span></span>';
         });
+        
         var content = 
             '<div class="form-group">' +
             '<label>Display Title</label>' +
@@ -4392,6 +4576,7 @@
             '<option value="select" ' + (elementType === 'select' ? 'selected' : '') + '>Select</option>' +
             '<option value="textarea" ' + (elementType === 'textarea' ? 'selected' : '') + '>Textarea</option>' +
             '<option value="date-time-input" ' + (elementType === 'date-time-input' ? 'selected' : '') + '>Date & Time</option>' +
+            '<option value="button" ' + (elementType === 'button' ? 'selected' : '') + '>Button</option>' +
             '</select>' +
             '</div>' +
             '<div class="form-group" id="df_default_value_container">' +
@@ -4411,6 +4596,13 @@
             '</div>' +
             '<div id="df_default_values_list" style="margin-top:8px;">' + defaultValuesHtml + '</div>' +
             '</div>' +
+            '<div class="form-group" id="df_url_container" style="' + (elementType === 'button' ? 'display:block;' : 'display:none;') + '">' +
+            '<label>Button URL (onclick value)</label>' +
+            '<div id="df_url_input_container">' +
+            '<input type="url" id="df_url_value" value="' + buttonUrl + '" placeholder="Enter URL (e.g., https://example.com)..." style="width:100%; padding:10px; border:2px solid #e5e7eb; border-radius:8px;">' +
+            '<small style="color:#6b7280;">This URL will be opened in a new window/tab when the button is clicked.</small>' +
+            '</div>' +
+            '</div>' +
             '</div>' +
             '<div id="objects_fields_container" style="' + (isObjects ? 'display:block;' : 'display:none;') + '">' +
             '<h4 style="margin-bottom:10px;"> Sub Fields</h4>' +
@@ -4423,6 +4615,7 @@
             '<button type="button" class="btn btn-success" onclick="updateDynamicField(\'' + fieldKey + '\')"> Update Field</button>' +
             '<button type="button" class="btn btn-secondary" onclick="closeDialog()">Cancel</button>' +
             '</div>';
+        
         showDialog('Edit Dynamic Field', '', null, content);
         toggleFieldCategory();
         toggleDefaultValueInput();
@@ -4469,6 +4662,9 @@
         }
     }
 
+    // ===== UPDATE addSubField FUNCTION =====
+    // Replace the entire function with this version
+
     function addSubField() {
         var index = subFields.length;
         var html = 
@@ -4489,6 +4685,7 @@
             '<option value="select">Select</option>' +
             '<option value="textarea">Textarea</option>' +
             '<option value="date-time-input">Date & Time</option>' +
+            '<option value="button">Button</option>' +
             '</select>' +
             '</div>' +
             '<div class="form-group" id="sub_default_value_container_' + index + '">' +
@@ -4508,12 +4705,23 @@
             '</div>' +
             '<div id="sub_default_values_list_' + index + '" style="margin-top:8px;"></div>' +
             '</div>' +
+            '<div class="form-group" id="sub_url_container_' + index + '" style="display:none;">' +
+            '<label>Button URL (onclick value)</label>' +
+            '<div id="sub_url_input_container_' + index + '">' +
+            '<input type="url" id="sub_url_value_' + index + '" placeholder="Enter URL (e.g., https://example.com)..." style="width:100%; padding:10px; border:2px solid #e5e7eb; border-radius:8px;">' +
+            '<small style="color:#6b7280;">This URL will be opened in a new window/tab when the button is clicked.</small>' +
+            '</div>' +
+            '</div>' +
             '</div>';
-        subFields.push({ defaultValues: [], default_value: '' });
+        
+        subFields.push({ defaultValues: [], default_value: '', button_url: '' });
         document.getElementById('sub_fields_list').insertAdjacentHTML('beforeend', html);
         renderSubFieldDefaultValues(index);
         toggleSubDefaultValueInput(index);
     }
+
+    // ===== UPDATE toggleSubDefaultValueInput FUNCTION =====
+    // Replace the entire function with this version
 
     function toggleSubDefaultValueInput(index) {
         var elementType = document.getElementById('sub_element_' + index).value;
@@ -4521,19 +4729,29 @@
         var defaultValueInputContainer = document.getElementById('sub_default_value_input_container_' + index);
         var defaultValueTextareaContainer = document.getElementById('sub_default_value_textarea_container_' + index);
         var selectValuesContainer = document.getElementById('sub_select_values_container_' + index);
+        var urlContainer = document.getElementById('sub_url_container_' + index);
+        
+        // Hide all optional containers first
+        if (defaultValueContainer) defaultValueContainer.style.display = 'none';
+        if (selectValuesContainer) selectValuesContainer.style.display = 'none';
+        if (urlContainer) urlContainer.style.display = 'none';
+        if (defaultValueInputContainer) defaultValueInputContainer.style.display = 'none';
+        if (defaultValueTextareaContainer) defaultValueTextareaContainer.style.display = 'none';
+        
         if (elementType === 'select') {
-            if (defaultValueContainer) defaultValueContainer.style.display = 'none';
+            if (defaultValueContainer) defaultValueContainer.style.display = 'block';
             if (selectValuesContainer) selectValuesContainer.style.display = 'block';
         } else if (elementType === 'textarea') {
             if (defaultValueContainer) defaultValueContainer.style.display = 'block';
             if (defaultValueInputContainer) defaultValueInputContainer.style.display = 'none';
             if (defaultValueTextareaContainer) defaultValueTextareaContainer.style.display = 'block';
-            if (selectValuesContainer) selectValuesContainer.style.display = 'none';
+        } else if (elementType === 'button') {
+            if (urlContainer) urlContainer.style.display = 'block';
         } else {
+            // Input, date-time-input, etc.
             if (defaultValueContainer) defaultValueContainer.style.display = 'block';
             if (defaultValueInputContainer) defaultValueInputContainer.style.display = 'block';
             if (defaultValueTextareaContainer) defaultValueTextareaContainer.style.display = 'none';
-            if (selectValuesContainer) selectValuesContainer.style.display = 'none';
         }
     }
 
@@ -4620,26 +4838,40 @@
         });
     }
 
+    // ===== UPDATE updateDynamicField FUNCTION =====
+    // Replace the entire function with this version
+
     function updateDynamicField(oldKey) {
         var title = document.getElementById('df_title').value.trim();
         var key = document.getElementById('df_key').value.trim();
         var category = document.getElementById('df_category').value;
+        
         if (!title || !key) {
             showDialog('Error', 'Please enter both title and key.');
             return;
         }
         key = key.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        
         var fieldData = {};
         if (category === 'individual') {
             var elementType = document.getElementById('df_element_type').value;
             var defaultValue = '';
+            var buttonUrl = '';
+            
             if (elementType === 'textarea') {
-                var textarea = document.getElementById('df_default_value_textarea');
-                if (textarea) defaultValue = textarea.value.trim();
-            } else if (elementType !== 'select') {
-                var input = document.getElementById('df_default_value');
-                if (input) defaultValue = input.value.trim();
+                defaultValue = document.getElementById('df_default_value_textarea').value.trim();
+            } else if (elementType === 'select') {
+                // For select, we don't use defaultValue directly
+            } else if (elementType === 'button') {
+                buttonUrl = document.getElementById('df_url_value').value.trim();
+                // ADD PROTOCOL IF MISSING
+                if (buttonUrl && !buttonUrl.match(/^https?:\/\//i)) {
+                    buttonUrl = 'https://' + buttonUrl;
+                }
+            } else {
+                defaultValue = document.getElementById('df_default_value').value.trim();
             }
+            
             var defaultValues = window._dfDefaultValues || [];
             fieldData = {
                 'field-title': title,
@@ -4647,7 +4879,8 @@
                 'field_type': 'individual',
                 'element_type': elementType,
                 'default_value': defaultValue,
-                'default_values': defaultValues
+                'default_values': defaultValues,
+                'button_url': buttonUrl
             };
         } else {
             var subFieldData = {};
@@ -4662,13 +4895,25 @@
                     var se = subElement.value;
                     var sdv = subFields[idx] ? subFields[idx].defaultValues || [] : [];
                     var sDefaultValue = '';
+                    var sButtonUrl = '';
+                    
                     if (se === 'textarea') {
-                        var textarea2 = document.getElementById('sub_default_value_textarea_' + idx);
-                        if (textarea2) sDefaultValue = textarea2.value.trim();
+                        var textarea = document.getElementById('sub_default_value_textarea_' + idx);
+                        if (textarea) sDefaultValue = textarea.value.trim();
+                    } else if (se === 'button') {
+                        var urlInput = document.getElementById('sub_url_value_' + idx);
+                        if (urlInput) {
+                            sButtonUrl = urlInput.value.trim();
+                            // ADD PROTOCOL IF MISSING
+                            if (sButtonUrl && !sButtonUrl.match(/^https?:\/\//i)) {
+                                sButtonUrl = 'https://' + sButtonUrl;
+                            }
+                        }
                     } else if (se !== 'select') {
-                        var input2 = document.getElementById('sub_default_value_' + idx);
-                        if (input2) sDefaultValue = input2.value.trim();
+                        var input = document.getElementById('sub_default_value_' + idx);
+                        if (input) sDefaultValue = input.value.trim();
                     }
+                    
                     if (st && sk) {
                         subFieldData[sk] = {
                             'field-title': st,
@@ -4676,7 +4921,8 @@
                             'field_type': 'individual',
                             'element_type': se,
                             'default_value': sDefaultValue,
-                            'default_values': sdv
+                            'default_values': sdv,
+                            'button_url': sButtonUrl
                         };
                     }
                 }
@@ -4688,12 +4934,14 @@
                 'fieldkeyvalue': subFieldData
             };
         }
+        
         var finalKey = key;
         var formData = new FormData();
         formData.append('update_global_field', 'true');
         formData.append('old_key', oldKey);
         formData.append('new_key', finalKey);
         formData.append('field_data', JSON.stringify(fieldData));
+        
         showDialog('Saving', 'Updating field...');
         fetch(window.location.href, {
             method: 'POST',
@@ -4747,6 +4995,46 @@
         window._dfDefaultValues = [];
         renderAddFieldDialog();
     }
+    // ===== UPDATE toggleDefaultValueInput FUNCTION =====
+    // Add this complete function with the new "button" case
+
+    function toggleDefaultValueInput() {
+        var elementType = document.getElementById('df_element_type').value;
+        var defaultValueContainer = document.getElementById('df_default_value_container');
+        var defaultValueInput = document.getElementById('df_default_value_input_container');
+        var defaultValueTextarea = document.getElementById('df_default_value_textarea_container');
+        var selectValuesContainer = document.getElementById('df_select_values_container');
+        var urlContainer = document.getElementById('df_url_container');
+        var urlInput = document.getElementById('df_url_input_container');
+        
+        // Hide all optional containers first
+        if (defaultValueContainer) defaultValueContainer.style.display = 'none';
+        if (selectValuesContainer) selectValuesContainer.style.display = 'none';
+        if (urlContainer) urlContainer.style.display = 'none';
+        if (defaultValueInput) defaultValueInput.style.display = 'none';
+        if (defaultValueTextarea) defaultValueTextarea.style.display = 'none';
+        
+        if (elementType === 'select') {
+            if (defaultValueContainer) defaultValueContainer.style.display = 'block';
+            if (selectValuesContainer) selectValuesContainer.style.display = 'block';
+        } else if (elementType === 'textarea') {
+            if (defaultValueContainer) defaultValueContainer.style.display = 'block';
+            if (defaultValueInput) defaultValueInput.style.display = 'none';
+            if (defaultValueTextarea) defaultValueTextarea.style.display = 'block';
+        } else if (elementType === 'button') {
+            // For button type, show URL input instead of default value
+            if (urlContainer) urlContainer.style.display = 'block';
+            if (urlInput) urlInput.style.display = 'block';
+        } else {
+            // Input, date-time-input, etc.
+            if (defaultValueContainer) defaultValueContainer.style.display = 'block';
+            if (defaultValueInput) defaultValueInput.style.display = 'block';
+            if (defaultValueTextarea) defaultValueTextarea.style.display = 'none';
+        }
+    }
+
+    // ===== UPDATE renderAddFieldDialog FUNCTION =====
+    // Replace the entire function with this version
 
     function renderAddFieldDialog() {
         var content = 
@@ -4774,6 +5062,7 @@
             '<option value="select">Select</option>' +
             '<option value="textarea">Textarea</option>' +
             '<option value="date-time-input">Date & Time</option>' +
+            '<option value="button">Button</option>' +
             '</select>' +
             '</div>' +
             '<div class="form-group" id="df_default_value_container">' +
@@ -4793,6 +5082,13 @@
             '</div>' +
             '<div id="df_default_values_list" style="margin-top:8px;"></div>' +
             '</div>' +
+            '<div class="form-group" id="df_url_container" style="display:none;">' +
+            '<label>Button URL (onclick value)</label>' +
+            '<div id="df_url_input_container">' +
+            '<input type="url" id="df_url_value" placeholder="Enter URL (e.g., https://example.com)..." style="width:100%; padding:10px; border:2px solid #e5e7eb; border-radius:8px;">' +
+            '<small style="color:#6b7280;">This URL will be opened in a new window/tab when the button is clicked.</small>' +
+            '</div>' +
+            '</div>' +
             '</div>' +
             '<div id="objects_fields_container" style="display:none;">' +
             '<h4 style="margin-bottom:10px;"> Sub Fields</h4>' +
@@ -4805,6 +5101,7 @@
             '<button type="button" class="btn btn-success" onclick="saveDynamicField()"> Save Field</button>' +
             '<button type="button" class="btn btn-secondary" onclick="closeDialog()">Cancel</button>' +
             '</div>';
+        
         showDialog('Add Dynamic Field', '', null, content);
         toggleFieldCategory();
         toggleDefaultValueInput();
@@ -4815,28 +5112,43 @@
         var title = document.getElementById('df_title').value.trim();
         var key = document.getElementById('df_key').value.trim();
         var category = document.getElementById('df_category').value;
+        
         if (!title || !key) {
             showDialog('Error', 'Please enter both title and key.');
             return;
         }
         key = key.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        
         var fieldData = {};
         if (category === 'individual') {
             var elementType = document.getElementById('df_element_type').value;
             var defaultValue = '';
+            var buttonUrl = '';
+            
             if (elementType === 'textarea') {
                 defaultValue = document.getElementById('df_default_value_textarea').value.trim();
-            } else if (elementType !== 'select') {
+            } else if (elementType === 'select') {
+                // For select, we don't use defaultValue directly
+            } else if (elementType === 'button') {
+                buttonUrl = document.getElementById('df_url_value').value.trim();
+                // ADD PROTOCOL IF MISSING
+                if (buttonUrl && !buttonUrl.match(/^https?:\/\//i)) {
+                    buttonUrl = 'https://' + buttonUrl;
+                }
+            } else {
                 defaultValue = document.getElementById('df_default_value').value.trim();
             }
+            
             var defaultValues = window._dfDefaultValues || [];
+            
             fieldData = {
                 'field-title': title,
                 'field-name': key,
                 'field_type': 'individual',
                 'element_type': elementType,
                 'default_value': defaultValue,
-                'default_values': defaultValues
+                'default_values': defaultValues,
+                'button_url': buttonUrl
             };
         } else {
             var subFieldData = {};
@@ -4851,13 +5163,25 @@
                     var se = subElement.value;
                     var sdv = subFields[idx] ? subFields[idx].defaultValues || [] : [];
                     var sDefaultValue = '';
+                    var sButtonUrl = '';
+                    
                     if (se === 'textarea') {
                         var textarea = document.getElementById('sub_default_value_textarea_' + idx);
                         if (textarea) sDefaultValue = textarea.value.trim();
+                    } else if (se === 'button') {
+                        var urlInput = document.getElementById('sub_url_value_' + idx);
+                        if (urlInput) {
+                            sButtonUrl = urlInput.value.trim();
+                            // ADD PROTOCOL IF MISSING
+                            if (sButtonUrl && !sButtonUrl.match(/^https?:\/\//i)) {
+                                sButtonUrl = 'https://' + sButtonUrl;
+                            }
+                        }
                     } else if (se !== 'select') {
                         var input = document.getElementById('sub_default_value_' + idx);
                         if (input) sDefaultValue = input.value.trim();
                     }
+                    
                     if (st && sk) {
                         subFieldData[sk] = {
                             'field-title': st,
@@ -4865,7 +5189,8 @@
                             'field_type': 'individual',
                             'element_type': se,
                             'default_value': sDefaultValue,
-                            'default_values': sdv
+                            'default_values': sdv,
+                            'button_url': sButtonUrl
                         };
                     }
                 }
@@ -4877,9 +5202,11 @@
                 'fieldkeyvalue': subFieldData
             };
         }
+        
         var formData = new FormData();
         formData.append('save_global_single_field', 'true');
         formData.append('field_data', JSON.stringify(fieldData));
+        
         showDialog('Saving', 'Saving field...');
         fetch(window.location.href, {
             method: 'POST',
@@ -4981,6 +5308,134 @@
 </script>
 <script>
     // ============================================================
+    // ===== COPY BUTTON VISIBILITY BASED ON TAB FEATURES =====
+    // ============================================================
+
+    // Function to update copy button visibility based on active tab
+    function updateCopyButtonsVisibility() {
+        var addEntryTab = document.getElementById('user_tab_add_entry');
+        if (!addEntryTab) return;
+        
+        var activeContent = addEntryTab.querySelector('.dynamic-sub-tab-content.active');
+        if (!activeContent) return;
+        
+        // Find the active tab
+        var activeTabBtn = document.querySelector('#user_tab_add_entry .dynamic-sub-tab-btn.active');
+        var tabId = null;
+        if (activeTabBtn) {
+            tabId = activeTabBtn.getAttribute('data-tab');
+            if (!tabId) {
+                var onclickAttr = activeTabBtn.getAttribute('onclick');
+                if (onclickAttr) {
+                    var match = onclickAttr.match(/switchNewProjectSubTab\('([^']+)'/);
+                    if (match) tabId = match[1];
+                }
+            }
+        }
+        
+        var tabIndex = -1;
+        if (tabId) {
+            tabIndex = parseInt(tabId.replace('tab_', ''));
+        }
+        
+        // Check if we're on the all_fields tab
+        var allFieldsTab = document.getElementById('newProjectSubTab_all_fields');
+        if (allFieldsTab && allFieldsTab.classList.contains('active')) {
+            // On all_fields tab, show all copy buttons by default
+            activeContent.querySelectorAll('[id^="field_"]_container .btn-secondary, [id^="object_"]_container .btn-secondary').forEach(function(btn) {
+                if (btn.textContent.includes('Copy')) {
+                    btn.style.display = 'inline-block';
+                }
+            });
+            return;
+        }
+        
+        if (isNaN(tabIndex) || tabIndex < 0 || tabIndex >= userDynamicTabs.length) {
+            // Default: show all copy buttons
+            activeContent.querySelectorAll('[id^="field_"]_container .btn-secondary, [id^="object_"]_container .btn-secondary').forEach(function(btn) {
+                if (btn.textContent.includes('Copy')) {
+                    btn.style.display = 'inline-block';
+                }
+            });
+            return;
+        }
+        
+        var tab = userDynamicTabs[tabIndex];
+        if (!tab) {
+            // Default: show all copy buttons
+            activeContent.querySelectorAll('[id^="field_"]_container .btn-secondary, [id^="object_"]_container .btn-secondary').forEach(function(btn) {
+                if (btn.textContent.includes('Copy')) {
+                    btn.style.display = 'inline-block';
+                }
+            });
+            return;
+        }
+        
+        var additionalFeatures = tab.additional_features || {
+            copy_button: false,
+            transcript_detection: false,
+            transcript_with_structured_data_detection: false
+        };
+        
+        var copyButtonEnabled = additionalFeatures.copy_button === true;
+        
+        // Find all copy buttons in the active content
+        var copyButtons = activeContent.querySelectorAll('.btn-secondary');
+        copyButtons.forEach(function(btn) {
+            // Check if this is a copy button (contains copy-related text)
+            var btnText = btn.textContent || '';
+            if (btnText.includes('Copy') || btnText.includes('📋')) {
+                if (copyButtonEnabled) {
+                    btn.style.display = 'inline-block';
+                } else {
+                    btn.style.display = 'none';
+                }
+            }
+        });
+        
+        // Also handle the copy buttons inside field containers
+        activeContent.querySelectorAll('[id^="field_"]_container .btn-secondary, [id^="object_"]_container .btn-secondary').forEach(function(btn) {
+            var btnText = btn.textContent || '';
+            if (btnText.includes('Copy') || btnText.includes('📋')) {
+                if (copyButtonEnabled) {
+                    btn.style.display = 'inline-block';
+                } else {
+                    btn.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // Override switchNewProjectSubTab to also update copy buttons
+    var _originalSwitchNewProjectSubTab2 = switchNewProjectSubTab;
+    switchNewProjectSubTab = function(tabId, btn) {
+        _originalSwitchNewProjectSubTab2(tabId, btn);
+        setTimeout(function() { 
+            detectTranscripts();
+            updateCopyButtonsVisibility();
+        }, 200);
+    };
+
+    // Run copy button visibility check after DOM changes
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            updateCopyButtonsVisibility();
+        }, 500);
+    });
+
+    // Also run after any AJAX-like updates
+    var _originalRenderDynamicTabsEditor = renderDynamicTabsEditor;
+    renderDynamicTabsEditor = function() {
+        _originalRenderDynamicTabsEditor();
+        setTimeout(function() {
+            updateCopyButtonsVisibility();
+        }, 300);
+    };
+
+    console.log('✅ Copy button visibility based on tab features initialized');
+</script>
+<script>
+    // ============================================================
     // ===== TRANSCRIPT DETECTION AND CONVERSION ENGINE =====
     // ============================================================
 
@@ -4993,6 +5448,65 @@
     // Store conversion results for each element
     window._conversionResults = {};
 
+    // Function to get the currently active tab index
+    function getActiveTabIndex() {
+        var activeTabBtn = document.querySelector('#user_tab_add_entry .dynamic-sub-tab-btn.active');
+        if (!activeTabBtn) return -1;
+        
+        var tabId = activeTabBtn.getAttribute('data-tab');
+        if (!tabId) {
+            var onclickAttr = activeTabBtn.getAttribute('onclick');
+            if (onclickAttr) {
+                var match = onclickAttr.match(/switchNewProjectSubTab\('([^']+)'/);
+                if (match) tabId = match[1];
+            }
+        }
+        
+        if (!tabId) return -1;
+        var tabIndex = parseInt(tabId.replace('tab_', ''));
+        return isNaN(tabIndex) ? -1 : tabIndex;
+    }
+
+    // Function to get additional features for the active tab
+    function getActiveTabFeatures() {
+        var tabIndex = getActiveTabIndex();
+        
+        // Check if we're on the all_fields tab
+        var allFieldsTab = document.getElementById('newProjectSubTab_all_fields');
+        if (allFieldsTab && allFieldsTab.classList.contains('active')) {
+            // All fields tab - return default features (all enabled)
+            return {
+                copy_button: true,
+                transcript_detection: true,
+                transcript_with_structured_data_detection: true
+            };
+        }
+        
+        if (tabIndex < 0 || tabIndex >= userDynamicTabs.length) {
+            // Default: all features enabled
+            return {
+                copy_button: true,
+                transcript_detection: true,
+                transcript_with_structured_data_detection: true
+            };
+        }
+        
+        var tab = userDynamicTabs[tabIndex];
+        if (!tab) {
+            return {
+                copy_button: true,
+                transcript_detection: true,
+                transcript_with_structured_data_detection: true
+            };
+        }
+        
+        return tab.additional_features || {
+            copy_button: false,
+            transcript_detection: false,
+            transcript_with_structured_data_detection: false
+        };
+    }
+
     // Function to detect transcript in element values
     function detectTranscripts() {
         var addEntryTab = document.getElementById('user_tab_add_entry');
@@ -5003,6 +5517,12 @@
         
         var elements = activeContent.querySelectorAll('input, textarea, select');
         
+        // Get features for the active tab
+        var features = getActiveTabFeatures();
+        var transcriptDetectionEnabled = features.transcript_detection === true;
+        var structuredDetectionEnabled = features.transcript_with_structured_data_detection === true;
+        var copyButtonEnabled = features.copy_button === true;
+        
         elements.forEach(function(element) {
             var value = element.value || element.textContent || '';
             var elementId = element.id || '';
@@ -5012,10 +5532,35 @@
             var timePattern = /[-_\(]?\d{1,2}:\d{2}[-_\)]?/;
             var hasTime = timePattern.test(value);
             
+            // Check if this transcript contains structured data
+            var hasStructuredData = detectStructuredCharacterData(value);
+            
             var existingIndicator = document.getElementById('transcript_indicator_' + elementId);
             var existingResult = document.getElementById('transcript_result_' + elementId);
             
+            // Determine if we should show anything
+            var shouldShowTranscript = false;
+            var shouldShowStructured = false;
+            
+            // INDEPENDENT CHECKS - each feature works separately
             if (hasTime) {
+                // Regular transcript detection is independent
+                if (transcriptDetectionEnabled) {
+                    shouldShowTranscript = true;
+                }
+            }
+            
+            // Structured data detection is independent
+            if (hasStructuredData) {
+                if (structuredDetectionEnabled) {
+                    shouldShowStructured = true;
+                    // Structured data also counts as a transcript
+                    shouldShowTranscript = true;
+                }
+            }
+            
+            // If we should show either type
+            if (shouldShowTranscript) {
                 window._transcriptData[elementId] = {
                     value: value,
                     element: element
@@ -5029,25 +5574,36 @@
                     indicator.id = 'transcript_indicator_' + elementId;
                     indicator.style.cssText = 'margin-top:8px; padding:8px 12px; background:#d1fae5; border-radius:8px; border-left:4px solid #00695c; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;';
                     
-                    // Check if character data exists in JSON structure format
-                    var hasStructuredData = detectStructuredCharacterData(value);
+                    var indicatorText = '';
+                    var buttonsHtml = '';
                     
-                    if (hasStructuredData) {
-                        // Only show Convert to Text button for structured data
-                        indicator.innerHTML = 
-                            '<span style="color:#065f46; font-weight:500;">📝 Transcript with Structured Character Data Detected</span>' +
+                    if (shouldShowStructured) {
+                        // Structured data detected - Show Convert to Text button
+                        indicatorText = '📝 Transcript with Structured Character Data Detected';
+                        buttonsHtml = 
                             '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
                             '<button type="button" class="btn btn-primary btn-sm" onclick="convertToText(\'' + elementId + '\')" style="padding:4px 12px; font-size:12px; background:#7c3aed; color:white;">📄 Convert to Text</button>' +
                             '</div>';
-                    } else {
-                        // Show Convert to JSON and View buttons for regular transcript
-                        indicator.innerHTML = 
-                            '<span style="color:#065f46; font-weight:500;">📝 Transcript Detected</span>' +
+                    } else if (shouldShowTranscript) {
+                        // Regular transcript detected - Show Convert to JSON and View buttons
+                        indicatorText = '📝 Transcript Detected';
+                        buttonsHtml = 
                             '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
                             '<button type="button" class="btn btn-success btn-sm" onclick="convertAndDisplayInline(\'' + elementId + '\')" style="padding:4px 12px; font-size:12px;">🔄 Convert to JSON</button>' +
                             '<button type="button" class="btn btn-primary btn-sm" onclick="openTranscriptDialog(\'' + elementId + '\')" style="padding:4px 12px; font-size:12px;">View</button>' +
                             '</div>';
                     }
+                    
+                    // Add copy button if enabled
+                    if (copyButtonEnabled) {
+                        buttonsHtml = buttonsHtml.replace('</div>', '');
+                        buttonsHtml += '<button type="button" class="btn btn-secondary btn-sm" onclick="copyTranscriptValue(\'' + elementId + '\')" style="padding:4px 12px; font-size:12px;">📋 Copy</button>';
+                        buttonsHtml += '</div>';
+                    }
+                    
+                    indicator.innerHTML = 
+                        '<span style="color:#065f46; font-weight:500;">' + indicatorText + '</span>' +
+                        buttonsHtml;
                     
                     var container = element.closest('.form-group') || element.closest('.sub-field-group') || element.parentElement;
                     if (container) {
@@ -5055,8 +5611,16 @@
                     } else {
                         element.parentNode.insertBefore(indicator, element.nextSibling);
                     }
+                } else {
+                    // Update existing indicator - check visibility
+                    if (!shouldShowTranscript) {
+                        existingIndicator.style.display = 'none';
+                    } else {
+                        existingIndicator.style.display = 'flex';
+                    }
                 }
             } else {
+                // Remove if no transcript or structured data
                 if (existingIndicator) {
                     existingIndicator.remove();
                     delete window._transcriptData[elementId];
@@ -5067,6 +5631,16 @@
                 }
             }
         });
+    }
+
+    // Helper function to copy transcript value
+    function copyTranscriptValue(elementId) {
+        var data = window._transcriptData[elementId];
+        if (data) {
+            copyToClipboard(data.value);
+        } else {
+            showDialog('Info', 'No transcript data to copy.');
+        }
     }
 
     // Detect if character data is in structured JSON format - ONLY when both characters_visual_prompts and script exist
@@ -5109,9 +5683,6 @@
         if (foundCharacterData) {
             window._characterData = foundCharacterData;
             console.log('✅ Character data stored globally with ' + Object.keys(foundCharacterData).length + ' characters');
-        } else {
-            // Keep existing character data if already found
-            // Don't clear it unless we're sure no character data exists anywhere
         }
     }
 
@@ -5318,6 +5889,13 @@
 
     // Function to open transcript dialog
     function openTranscriptDialog(elementId) {
+        // Check if transcript detection is enabled for this tab
+        var features = getActiveTabFeatures();
+        if (features.transcript_detection !== true) {
+            showDialog('Info', 'Transcript detection is not enabled for this tab.');
+            return;
+        }
+        
         var data = window._transcriptData[elementId];
         if (!data) {
             showDialog('Error', 'Transcript data not found.');
@@ -5349,6 +5927,13 @@
 
     // NEW FUNCTION: Convert to Text format with batches
     function convertToText(elementId) {
+        // Check if structured data detection is enabled for this tab
+        var features = getActiveTabFeatures();
+        if (features.transcript_with_structured_data_detection !== true) {
+            showDialog('Info', 'Structured data detection is not enabled for this tab.');
+            return;
+        }
+        
         var data = window._transcriptData[elementId];
         if (!data) {
             showDialog('Error', 'Transcript data not found.');
@@ -5547,9 +6132,48 @@
         
         // Process all entries WITHOUT distributing characters to view_focus_characters
         var updatedScriptEntries = [];
+        var charPrompts = parsedData.characters_visual_prompts || {};
         
         for (var idx = 0; idx < scriptEntries.length; idx++) {
             var entry = scriptEntries[idx];
+            
+            // Extract view_focus_characters - if it exists, use it, otherwise extract from view_focus
+            var viewFocusChars = '';
+            if (entry.view_focus_characters) {
+                viewFocusChars = entry.view_focus_characters;
+            } else if (entry.view_focus) {
+                // Try to extract from view_focus
+                viewFocusChars = entry.view_focus;
+            }
+            
+            // Parse view focus characters - handle "and" and commas
+            var charNames = [];
+            if (viewFocusChars) {
+                // Split by "and" or commas
+                var parts = viewFocusChars.split(/\s+and\s+|\s*,\s*/);
+                parts.forEach(function(part) {
+                    var trimmed = part.trim();
+                    if (trimmed) {
+                        charNames.push(trimmed);
+                    }
+                });
+            }
+            
+            // Also check for characters in scene_pov_prompt and dialogue
+            var scenePov = entry.scene_pov_prompt || entry.Scene_Pov_promt || '';
+            var dialogue = entry.dialogue || '';
+            var allText = scenePov + ' ' + dialogue;
+            
+            // Find mentioned characters
+            var mentionedChars = findMentionedCharacters(allText, charPrompts);
+            
+            // Combine with view focus characters
+            var allCharNames = charNames.slice();
+            mentionedChars.forEach(function(charName) {
+                if (allCharNames.indexOf(charName) === -1) {
+                    allCharNames.push(charName);
+                }
+            });
             
             // Create updated entry WITHOUT view_focus_characters distribution
             var updatedEntry = {
@@ -5558,7 +6182,9 @@
                 duration: entry.duration || '',
                 view_focus_characters: '', // Always empty - no distribution
                 dialogue: entry.dialogue || '',
-                Scene_Pov_promt: entry.scene_pov_prompt || entry.Scene_Pov_promt || ''
+                Scene_Pov_promt: entry.scene_pov_prompt || entry.Scene_Pov_promt || '',
+                // Store character names for details display
+                _characters: allCharNames
             };
             
             updatedScriptEntries.push(updatedEntry);
@@ -5583,10 +6209,28 @@
                 var entryNum = j + 1;
                 
                 textOutput += entryNum + '.\n';
-                textOutput += 'View Focus Characters: (none distributed)\n';
                 
-                textOutput += '\nDialogue: ' + (entry.dialogue || '') + '\n';
-                textOutput += 'Duration: ' + (entry.duration || '') + '\n';
+                // Add View Focus Characters
+                if (entry._characters && entry._characters.length > 0) {
+                    textOutput += 'View Focus Characters: ' + entry._characters.join(' and ') + '\n';
+                } else {
+                    textOutput += 'View Focus Characters: (none)\n';
+                }
+                
+                // Add character details for each character
+                if (entry._characters && entry._characters.length > 0) {
+                    for (var c = 0; c < entry._characters.length; c++) {
+                        var charName = entry._characters[c];
+                        var charInfo = charPrompts[charName];
+                        if (charInfo) {
+                            textOutput += charName + ' Details:\n';
+                            textOutput += '    relation: ' + (charInfo.relation || '') + '\n';
+                            textOutput += '    details: ' + (charInfo.character_details || '') + '\n';
+                        }
+                    }
+                }
+                
+                textOutput += 'Dialogue: ' + (entry.dialogue || '') + '\n';
                 textOutput += 'Scene Pov Promt: ' + (entry.Scene_Pov_promt || '') + '\n\n';
             }
         }
@@ -5601,6 +6245,13 @@
 
     // NEW FUNCTION: Convert and display inline without modal
     function convertAndDisplayInline(elementId) {
+        // Check if transcript detection is enabled for this tab
+        var features = getActiveTabFeatures();
+        if (features.transcript_detection !== true) {
+            showDialog('Info', 'Transcript detection is not enabled for this tab.');
+            return;
+        }
+        
         var data = window._transcriptData[elementId];
         if (!data) {
             showDialog('Error', 'Transcript data not found.');
@@ -6189,23 +6840,37 @@
         }, 1000);
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        startTranscriptDetection();
-    });
-
-    var originalSwitchUserConfigTab = switchUserConfigTab;
+    // Override switchUserConfigTab to re-detect transcripts when switching to add_entry
+    var originalSwitchUserConfigTab = window.switchUserConfigTab || function() {};
     switchUserConfigTab = function(tabName, btn) {
         originalSwitchUserConfigTab(tabName, btn);
         if (tabName === 'add_entry') {
-            setTimeout(function() { detectTranscripts(); }, 100);
+            setTimeout(function() { 
+                detectTranscripts();
+                updateCopyButtonsVisibility();
+            }, 100);
         }
     };
 
-    var originalSwitchNewProjectSubTab = switchNewProjectSubTab;
+    // Override switchNewProjectSubTab to re-detect transcripts when switching sub-tabs
+    var originalSwitchNewProjectSubTab = window.switchNewProjectSubTab || function() {};
     switchNewProjectSubTab = function(tabId, btn) {
         originalSwitchNewProjectSubTab(tabId, btn);
-        setTimeout(function() { detectTranscripts(); }, 100);
+        setTimeout(function() { 
+            detectTranscripts();
+            updateCopyButtonsVisibility();
+        }, 100);
     };
+
+    // Initialize on DOM ready
+    document.addEventListener('DOMContentLoaded', function() {
+        startTranscriptDetection();
+        setTimeout(function() {
+            if (typeof updateCopyButtonsVisibility === 'function') {
+                updateCopyButtonsVisibility();
+            }
+        }, 500);
+    });
 </script>
 </body>
 </html>
